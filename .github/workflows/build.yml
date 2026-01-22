@@ -136,6 +136,15 @@ jobs:
         curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/dev_susfs/kernel/setup.sh" | bash -s dev_susfs
         echo "=== KernelSU-Next added ==="
 
+        # Fix SUSFS API compatibility (custom fork uses all_procs instead of non_su_procs)
+        SUPERCALLS_FILE="$KERNEL_ROOT/KernelSU-Next/kernel/supercalls.c"
+        if [ -f "$SUPERCALLS_FILE" ] && grep -q "hide_sus_mnts_for_non_su_procs" "$SUPERCALLS_FILE"; then
+          echo "Fixing SUSFS API compatibility..."
+          sed -i 's/CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS/CMD_SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS/g' "$SUPERCALLS_FILE"
+          sed -i 's/susfs_set_hide_sus_mnts_for_non_su_procs/susfs_set_hide_sus_mnts_for_all_procs/g' "$SUPERCALLS_FILE"
+          echo "SUSFS API fix applied"
+        fi
+
     - name: Apply Custom SUSFS Kernel Patches (All 11 Features)
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
