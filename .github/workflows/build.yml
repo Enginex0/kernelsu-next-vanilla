@@ -1,4 +1,4 @@
-name: Build KernelSU-Next GKI (No SUSFS)
+name: Build KernelSU-Next GKI + SUSFS
 
 permissions:
   contents: write
@@ -25,10 +25,14 @@ on:
         description: "OS Patch Level (YYYY-MM)"
         type: string
         default: "2024-05"
+      device_codename:
+        description: "Device Codename (for stock kernel spoofing)"
+        type: string
+        default: "lake"
 
 jobs:
   build:
-    name: "KSU-Next ${{ inputs.kernel_version }}.${{ inputs.sub_level }}"
+    name: "KSU-Next-SUSFS ${{ inputs.kernel_version }}.${{ inputs.sub_level }}"
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -62,6 +66,7 @@ jobs:
         CONFIG=$CONFIG
         KERNEL_ROOT=$KERNEL_ROOT
         ANYKERNEL3=$GITHUB_WORKSPACE/AnyKernel3
+        SUSFS4KSU=$GITHUB_WORKSPACE/susfs4ksu
         REPO=$GITHUB_WORKSPACE/git-repo/repo
         EOF
 
@@ -98,7 +103,7 @@ jobs:
           [[ -n "$EXTRACTED" ]] && ACTUAL_SUBLEVEL="$EXTRACTED"
         fi
 
-        ARTIFACT_BASE="${{ inputs.kernel_version }}.$ACTUAL_SUBLEVEL-${{ inputs.android_version }}-${{ inputs.os_patch_level }}-KSU-Next-NoSUSFS"
+        ARTIFACT_BASE="${{ inputs.kernel_version }}.$ACTUAL_SUBLEVEL-${{ inputs.android_version }}-${{ inputs.os_patch_level }}-KSU-Next-SUSFS"
         echo "ACTUAL_SUBLEVEL=$ACTUAL_SUBLEVEL" >> $GITHUB_ENV
         echo "ARTIFACT_BASE=$ARTIFACT_BASE" >> $GITHUB_ENV
         echo "FILE_NAME=$ARTIFACT_BASE" >> $GITHUB_ENV
@@ -131,11 +136,42 @@ jobs:
         curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
         echo "=== KernelSU-Next added ==="
 
+    - name: Apply SUSFS Patches (Upstream)
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        echo "=== Cloning upstream SUSFS ==="
+        SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
+        git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH" "$SUSFS4KSU"
+
+        echo "=== Applying SUSFS patches ==="
+        cd "$KERNEL_ROOT/common"
+
+        # Copy SUSFS kernel files
+        cp "$SUSFS4KSU/kernel_patches/fs/"* ./fs/
+        cp "$SUSFS4KSU/kernel_patches/include/linux/"* ./include/linux/
+
+        # Apply the main SUSFS patch
+        SUSFS_PATCH="$SUSFS4KSU/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch"
+        if [ -f "$SUSFS_PATCH" ]; then
+          patch -p1 < "$SUSFS_PATCH" || echo "SUSFS patch had some rejects, continuing..."
+        fi
+
+        # Fix for android12 5.10 <= 209
+        if [[ "${{ inputs.android_version }}" == "android12" && "${{ inputs.kernel_version }}" == "5.10" ]]; then
+          if [[ "$ACTUAL_SUBLEVEL" -le 209 ]]; then
+            sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c || true
+          fi
+        fi
+
+        echo "=== SUSFS patches applied ==="
+
     - name: Configure Kernel
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
-        # Add KernelSU config
-        echo "CONFIG_KSU=y" >> "${{ env.DEFCONFIG }}"
+        cat >> "${{ env.DEFCONFIG }}" << 'EOF'
+        CONFIG_KSU=y
+        CONFIG_KSU_SUSFS=y
+        EOF
 
         # Disable defconfig check for build
         if [[ "${{ inputs.kernel_version }}" == "6.12" ]]; then
@@ -157,11 +193,60 @@ jobs:
           perl -pi -e 's/^\s*"protected_exports_list"\s*:\s*"android\/abi_gki_protected_exports_aarch64",\s*$//;' ./common/BUILD.bazel
         fi
 
-        cd $KERNEL_ROOT/common
+    - name: Set Stock Build Identity
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        DEVICE_CODENAME="${{ inputs.device_codename }}"
+        PROFILE_FILE="$GITHUB_WORKSPACE/device-profiles.json"
+
+        if [ -f "$PROFILE_FILE" ] && command -v jq &> /dev/null; then
+          DEVICE_EXISTS=$(jq -r ".devices.${DEVICE_CODENAME} // empty" "$PROFILE_FILE")
+
+          if [ -n "$DEVICE_EXISTS" ]; then
+            echo "=== Using device profile: $DEVICE_CODENAME ==="
+
+            STOCK_RELEASE=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.release" "$PROFILE_FILE")
+            STOCK_VERSION=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.version_string" "$PROFILE_FILE")
+            STOCK_BUILD_USER=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.build_user" "$PROFILE_FILE")
+            STOCK_BUILD_HOST=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.build_host" "$PROFILE_FILE")
+
+            echo "Stock release: $STOCK_RELEASE"
+            echo "Stock version: $STOCK_VERSION"
+
+            # Patch setlocalversion to return stock release suffix
+            cat > scripts/setlocalversion << 'SETLOCAL_EOF'
+        #!/bin/sh
+        # Stock kernel identity - patched for detection bypass
+        printf '%s' "$STOCK_RELEASE_SUFFIX"
+        SETLOCAL_EOF
+            sed -i "s|\$STOCK_RELEASE_SUFFIX|${STOCK_RELEASE}|g" scripts/setlocalversion
+            chmod +x scripts/setlocalversion
+
+            # Patch mkcompile_h for stock version string
+            if [ -f "scripts/mkcompile_h" ]; then
+              sed -i "s|UTS_VERSION=.*|UTS_VERSION=\"${STOCK_VERSION}\"|" scripts/mkcompile_h
+              if grep -q "LINUX_COMPILE_BY=" scripts/mkcompile_h; then
+                sed -i "s|LINUX_COMPILE_BY=.*|LINUX_COMPILE_BY=\"${STOCK_BUILD_USER}\"|" scripts/mkcompile_h
+                sed -i "s|LINUX_COMPILE_HOST=.*|LINUX_COMPILE_HOST=\"${STOCK_BUILD_HOST}\"|" scripts/mkcompile_h
+              fi
+            fi
+
+            echo "KBUILD_BUILD_USER=$STOCK_BUILD_USER" >> $GITHUB_ENV
+            echo "KBUILD_BUILD_HOST=$STOCK_BUILD_HOST" >> $GITHUB_ENV
+          else
+            echo "WARNING: Device $DEVICE_CODENAME not found in profiles, using defaults"
+          fi
+        else
+          echo "WARNING: device-profiles.json not found or jq not available"
+        fi
+
+    - name: Commit Changes
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
         git add .
-        git commit -m "Apply KernelSU-Next" || true
+        git commit -m "Apply KernelSU-Next + SUSFS + Stock Identity" || true
 
     - name: Build Kernel
       working-directory: ${{ env.KERNEL_ROOT }}
@@ -193,11 +278,12 @@ jobs:
 
     - name: Build Summary
       run: |
-        echo "## KernelSU-Next Build (No SUSFS)" >> $GITHUB_STEP_SUMMARY
+        echo "## KernelSU-Next + SUSFS Build" >> $GITHUB_STEP_SUMMARY
         echo "| Config | Value |" >> $GITHUB_STEP_SUMMARY
         echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
         echo "| Kernel | ${{ inputs.kernel_version }}.${{ env.ACTUAL_SUBLEVEL }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Android | ${{ inputs.android_version }} |" >> $GITHUB_STEP_SUMMARY
         echo "| KSU | KernelSU-Next (next branch) |" >> $GITHUB_STEP_SUMMARY
-        echo "| SUSFS | DISABLED |" >> $GITHUB_STEP_SUMMARY
-        echo "| Purpose | Baseline test - no SUSFS to isolate detection issue |" >> $GITHUB_STEP_SUMMARY
+        echo "| SUSFS | Upstream (gitlab.com/simonpunk/susfs4ksu) |" >> $GITHUB_STEP_SUMMARY
+        echo "| Device Profile | ${{ inputs.device_codename }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Stock Spoofing | Enabled via device-profiles.json |" >> $GITHUB_STEP_SUMMARY
