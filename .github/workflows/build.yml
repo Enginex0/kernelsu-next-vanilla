@@ -132,18 +132,40 @@ jobs:
     - name: Add KernelSU-Next with SUSFS
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
-        echo "=== Adding KernelSU-Next (dev_susfs branch - has built-in SUSFS) ==="
-        # Use dev_susfs branch which has SUSFS built-in
+        echo "=== Adding KernelSU-Next (dev_susfs branch) ==="
         curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/dev_susfs/kernel/setup.sh" | bash -s dev_susfs
-        echo "=== KernelSU-Next with SUSFS added ==="
+        echo "=== KernelSU-Next added ==="
+
+    - name: Apply SUSFS Kernel Patches
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        echo "=== Cloning SUSFS kernel patches ==="
+        SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
+        git clone https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH" "$SUSFS4KSU"
+
+        echo "=== Applying SUSFS kernel patches ==="
+        cd "$KERNEL_ROOT/common"
+
+        # Copy SUSFS kernel files (susfs.c, susfs.h, etc.)
+        cp "$SUSFS4KSU/kernel_patches/fs/"* ./fs/
+        cp "$SUSFS4KSU/kernel_patches/include/linux/"* ./include/linux/
+
+        # Apply the SUSFS kernel integration patch (NOT the KSU-specific parts)
+        # We only need the kernel-level SUSFS infrastructure
+        SUSFS_PATCH="$SUSFS4KSU/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch"
+        if [ -f "$SUSFS_PATCH" ]; then
+          # Apply patch, ignore KSU-specific hunks that may fail
+          patch -p1 --no-backup-if-mismatch < "$SUSFS_PATCH" || true
+        fi
 
         # Fix for android12 5.10 <= 209
         if [[ "${{ inputs.android_version }}" == "android12" && "${{ inputs.kernel_version }}" == "5.10" ]]; then
-          cd "$KERNEL_ROOT/common"
           if [[ "$ACTUAL_SUBLEVEL" -le 209 ]]; then
             sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c || true
           fi
         fi
+
+        echo "=== SUSFS kernel patches applied ==="
 
     - name: Configure Kernel
       working-directory: ${{ env.KERNEL_ROOT }}
