@@ -72,7 +72,7 @@ jobs:
 
     - name: Clone AnyKernel3
       run: |
-        git clone https://github.com/osm0sis/AnyKernel3.git -b master
+        git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0
         rm -rf AnyKernel3/.git
 
     - name: Initialize and Sync Kernel Source
