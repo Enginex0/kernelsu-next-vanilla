@@ -173,14 +173,22 @@ jobs:
         SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
         git clone https://github.com/Enginex0/susfs4ksu.git -b "$SUSFS_BRANCH" "$SUSFS4KSU"
 
-        echo "=== Applying custom SUSFS command handlers to KernelSU-Next ==="
-        # Apply our custom patch (includes CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT) to KernelSU-Next
-        cd "$KERNEL_ROOT/KernelSU-Next"
-        if [ -f "$SUSFS4KSU/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" ]; then
-          patch -p1 --no-backup-if-mismatch < "$SUSFS4KSU/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
-          echo "Custom SUSFS command handlers (add_sus_kstat_redirect) applied"
+        echo "=== Injecting custom SUSFS command handler (add_sus_kstat_redirect) ==="
+        # KernelSU-Next dev_susfs already has SUSFS integration
+        # We only need to inject our new command handler inline
+        SUPERCALLS_FILE="$KERNEL_ROOT/KernelSU-Next/kernel/supercalls.c"
+        if [ -f "$SUPERCALLS_FILE" ] && ! grep -q "CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT" "$SUPERCALLS_FILE"; then
+          # Inject after CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY handler
+          sed -i '/CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY/,/#endif.*CONFIG_KSU_SUSFS_SUS_KSTAT/ {
+            /#endif.*CONFIG_KSU_SUSFS_SUS_KSTAT/ i\
+        if (cmd == CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT) {\
+            susfs_add_sus_kstat_redirect(arg);\
+            return 0;\
+        }
+          }' "$SUPERCALLS_FILE"
+          echo "Custom command handler injected into supercalls.c"
         else
-          echo "WARNING: 10_enable_susfs_for_ksu.patch not found - new commands won't work"
+          echo "Note: supercalls.c already has add_sus_kstat_redirect or file not found"
         fi
 
         echo "=== Applying SUSFS kernel patches ==="
