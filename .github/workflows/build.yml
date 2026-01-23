@@ -176,16 +176,23 @@ jobs:
         echo "=== Applying SUSFS kernel patches ==="
         cd "$KERNEL_ROOT/common"
 
-        # Copy SUSFS kernel files (susfs.c, susfs.h, etc.)
-        cp "$SUSFS4KSU/kernel_patches/fs/"* ./fs/
-        cp "$SUSFS4KSU/kernel_patches/include/linux/"* ./include/linux/
+        # Copy SUSFS kernel files (only .c and .h, not patches)
+        cp "$SUSFS4KSU/kernel_patches/fs/susfs.c" ./fs/
+        cp "$SUSFS4KSU/kernel_patches/include/linux/"*.h ./include/linux/
 
-        # Apply the SUSFS kernel integration patch
+        # Apply the main SUSFS kernel integration patch
         SUSFS_PATCH="$SUSFS4KSU/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch"
         if [ -f "$SUSFS_PATCH" ]; then
           patch -p1 --no-backup-if-mismatch < "$SUSFS_PATCH"
         else
           echo "ERROR: SUSFS patch not found: $SUSFS_PATCH" && exit 1
+        fi
+
+        # Apply unicode filter hooks patch (must be after main SUSFS patch)
+        UNICODE_PATCH="$SUSFS4KSU/kernel_patches/fs/51_add_susfs_unicode_filter_hooks.patch"
+        if [ -f "$UNICODE_PATCH" ]; then
+          echo "=== Applying Unicode filter hooks ==="
+          patch -p1 --no-backup-if-mismatch < "$UNICODE_PATCH"
         fi
 
         # Fix for android12 5.10 <= 209
