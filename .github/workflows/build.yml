@@ -277,6 +277,9 @@ jobs:
         CONFIG_ZRAM_DEF_COMP_LZ4KD=y
         CONFIG_TCP_CONG_ADVANCED=y
         CONFIG_TCP_CONG_CUBIC=y
+        CONFIG_TCP_CONG_BIC=n
+        CONFIG_TCP_CONG_WESTWOOD=n
+        CONFIG_TCP_CONG_HTCP=n
         DEFEOF
         sed -i 's/^        //' "${{ env.DEFCONFIG }}"
         sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' "${{ env.DEFCONFIG }}"
