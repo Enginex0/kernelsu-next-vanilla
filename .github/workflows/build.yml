@@ -207,12 +207,12 @@ jobs:
         cp -r "$SUKISU/other/zram/lz4k/crypto/"* ./crypto/
         cp -r "$SUKISU/other/zram/lz4k_oplus" ./lib/
 
-        # Apply kernel patches
+        # Apply kernel patches (lz4kd required, lz4k_oplus optional)
         if [ -f "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4kd.patch" ]; then
           patch -p1 -F3 < "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4kd.patch"
         fi
         if [ -f "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4k_oplus.patch" ]; then
-          patch -p1 -F3 < "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4k_oplus.patch"
+          patch -p1 -F3 < "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4k_oplus.patch" || echo "Note: lz4k_oplus patch skipped (optional)"
         fi
 
     - name: Configure Kernel (All 11 SUSFS Features)
