@@ -40,6 +40,20 @@ jobs:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
+    - name: Build Summary
+      run: |
+        echo "========================================"
+        echo "       Kernel Build Summary"
+        echo "========================================"
+        echo "Android Version : ${{ inputs.android_version }}"
+        echo "Kernel Version  : ${{ inputs.kernel_version }}"
+        echo "Sub Level       : ${{ inputs.sub_level }}"
+        echo "Patch Level     : ${{ inputs.os_patch_level }}"
+        echo "Device Codename : ${{ inputs.device_codename }}"
+        echo "KSU Variant     : KernelSU-Next (dev_susfs)"
+        echo "SUSFS           : Enginex0/susfs4ksu (all features)"
+        echo "========================================"
+
     - name: Free Disk Space
       uses: endersonmenezes/free-disk-space@v3
       with:
@@ -331,6 +345,23 @@ jobs:
         CONFIG_IP_SET_HASH_NETPORT=y
         CONFIG_IP_SET_HASH_NETIFACE=y
         CONFIG_IP_SET_LIST_SET=y
+        CONFIG_SND=y
+        CONFIG_SND_DRIVERS=y
+        CONFIG_SND_PCM=y
+        CONFIG_SND_TIMER=y
+        CONFIG_SND_DYNAMIC_MINORS=y
+        CONFIG_SND_PROC_FS=y
+        CONFIG_SND_ALOOP=y
+        CONFIG_USB_GADGET=y
+        CONFIG_CONFIGFS_FS=y
+        CONFIG_USB_CONFIGFS=y
+        CONFIG_USB_LIBCOMPOSITE=y
+        CONFIG_USB_AUDIO=y
+        CONFIG_USB_CONFIGFS_F_UAC1=y
+        CONFIG_USB_CONFIGFS_F_UAC2=y
+        CONFIG_RFKILL=y
+        CONFIG_CFG80211=y
+        CONFIG_MAC80211=y
         DEFEOF
         sed -i 's/^        //' "${{ env.DEFCONFIG }}"
         sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' "${{ env.DEFCONFIG }}"
@@ -692,11 +723,45 @@ jobs:
 
         echo "=== ZRAM module created ==="
 
+    - name: Collect Patch Rejects
+      if: always()
+      run: |
+        REJECTS_DIR="$GITHUB_WORKSPACE/patch-rejects"
+        mkdir -p "$REJECTS_DIR"
+        mapfile -t REJS < <(find "$KERNEL_ROOT" -type f -name '*.rej' 2>/dev/null)
+        REJ_COUNT=${#REJS[@]}
+        echo "Found $REJ_COUNT .rej files"
+        echo "REJ_COUNT=$REJ_COUNT" >> $GITHUB_ENV
+        if [ "$REJ_COUNT" -gt 0 ]; then
+          for REJ in "${REJS[@]}"; do
+            REL="${REJ#"$KERNEL_ROOT"/}"
+            DEST="$REJECTS_DIR/$REL"
+            mkdir -p "$(dirname "$DEST")"
+            cp "$REJ" "$DEST"
+            ORIG="${REJ%.rej}"
+            if [ -f "$ORIG" ]; then
+              ORIG_DEST="$REJECTS_DIR/${REL%.rej}"
+              mkdir -p "$(dirname "$ORIG_DEST")"
+              cp "$ORIG" "$ORIG_DEST"
+            fi
+            echo "$REL" >> "$REJECTS_DIR/index.txt"
+          done
+          echo "Patch rejects collected to $REJECTS_DIR"
+        fi
+
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: ${{ env.FILE_NAME }}-AnyKernel3
         path: ./AnyKernel3/**
+        compression-level: 9
+
+    - name: Upload Patch Rejects
+      if: always() && env.REJ_COUNT > 0
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.FILE_NAME }}-Rejects
+        path: patch-rejects/
         compression-level: 9
 
     - name: Build Summary
