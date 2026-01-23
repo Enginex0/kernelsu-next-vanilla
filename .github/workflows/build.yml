@@ -301,6 +301,15 @@ jobs:
         echo "=== NoMount integration complete ==="
         echo "🎉 SUSFS + NoMount Wedding Complete! 🎉"
 
+        # Apply critical fix for null inode->i_sb crashes
+        echo "=== Applying NoMount null i_sb fix ==="
+        if [ -f "$NOMOUNT_VFS/patches/fix-null-isb.patch" ]; then
+          patch -p1 < "$NOMOUNT_VFS/patches/fix-null-isb.patch"
+          echo "SUCCESS: Null i_sb fix applied"
+        else
+          echo "WARNING: fix-null-isb.patch not found, skipping"
+        fi
+
     - name: Upgrade LZ4 to v1.10.0 with ARM64 NEON
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
