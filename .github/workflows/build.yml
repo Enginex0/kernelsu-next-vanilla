@@ -186,6 +186,13 @@ jobs:
           echo "ERROR: SUSFS patch not found: $SUSFS_PATCH" && exit 1
         fi
 
+        # Apply Unicode filter hooks patch
+        UNICODE_HOOKS_PATCH="$SUSFS4KSU/kernel_patches/fs/51_add_susfs_unicode_filter_hooks.patch"
+        if [ -f "$UNICODE_HOOKS_PATCH" ]; then
+          echo "Applying Unicode filter hooks patch..."
+          patch -p1 --fuzz=3 < "$UNICODE_HOOKS_PATCH" || echo "Warning: Unicode hooks patch had issues"
+        fi
+
         # Fix for android12 5.10 <= 209
         if [[ "${{ inputs.android_version }}" == "android12" && "${{ inputs.kernel_version }}" == "5.10" ]]; then
           if [[ "$ACTUAL_SUBLEVEL" -le 209 ]]; then
@@ -231,6 +238,8 @@ jobs:
         CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
         CONFIG_KSU_SUSFS_UNICODE_FILTER=y
+        CONFIG_TMPFS_XATTR=y
+        CONFIG_TMPFS_POSIX_ACL=y
         CONFIG_ZSMALLOC=y
         CONFIG_ZRAM=y
         CONFIG_ZRAM_WRITEBACK=y
