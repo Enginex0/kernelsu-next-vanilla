@@ -181,13 +181,15 @@ jobs:
         # Apply the SUSFS kernel integration patch
         SUSFS_PATCH="$SUSFS4KSU/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch"
         if [ -f "$SUSFS_PATCH" ]; then
-          patch -p1 --no-backup-if-mismatch < "$SUSFS_PATCH" || true
+          patch -p1 --no-backup-if-mismatch < "$SUSFS_PATCH"
+        else
+          echo "ERROR: SUSFS patch not found: $SUSFS_PATCH" && exit 1
         fi
 
         # Fix for android12 5.10 <= 209
         if [[ "${{ inputs.android_version }}" == "android12" && "${{ inputs.kernel_version }}" == "5.10" ]]; then
           if [[ "$ACTUAL_SUBLEVEL" -le 209 ]]; then
-            sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c || true
+            sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
           fi
         fi
 
@@ -206,10 +208,12 @@ jobs:
         cp -r "$SUKISU/other/zram/lz4k_oplus" ./lib/
 
         # Apply kernel patches
-        [ -f "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4kd.patch" ] && \
-          patch -p1 -F3 < "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4kd.patch" || true
-        [ -f "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4k_oplus.patch" ] && \
-          patch -p1 -F3 < "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4k_oplus.patch" || true
+        if [ -f "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4kd.patch" ]; then
+          patch -p1 -F3 < "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4kd.patch"
+        fi
+        if [ -f "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4k_oplus.patch" ]; then
+          patch -p1 -F3 < "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4k_oplus.patch"
+        fi
 
     - name: Configure Kernel (All 11 SUSFS Features)
       working-directory: ${{ env.KERNEL_ROOT }}
