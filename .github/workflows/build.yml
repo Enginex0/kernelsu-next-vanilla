@@ -301,13 +301,17 @@ jobs:
         echo "=== NoMount integration complete ==="
         echo "🎉 SUSFS + NoMount Wedding Complete! 🎉"
 
-        # Apply critical fix for null inode->i_sb crashes
-        echo "=== Applying NoMount null i_sb fix ==="
-        if [ -f "$NOMOUNT_VFS/patches/fix-null-isb.patch" ]; then
-          patch -p1 < "$NOMOUNT_VFS/patches/fix-null-isb.patch"
-          echo "SUCCESS: Null i_sb fix applied"
+        # Apply critical fix for null inode->i_sb crashes using inline sed
+        echo "=== Applying NoMount null i_sb fix (inline) ==="
+        sed -i 's/if (!inode || NOMOUNT_DISABLED())/if (!inode || !inode->i_sb || NOMOUNT_DISABLED())/g' fs/vfs_dcache.c
+        echo "SUCCESS: Added inode->i_sb null checks to vfs_dcache.c"
+
+        # Verify the fix was applied
+        if grep -q '!inode->i_sb' fs/vfs_dcache.c; then
+          FIXED_COUNT=$(grep -c '!inode->i_sb' fs/vfs_dcache.c)
+          echo "Verified: $FIXED_COUNT null i_sb checks added"
         else
-          echo "WARNING: fix-null-isb.patch not found, skipping"
+          echo "WARNING: Fix verification failed"
         fi
 
     - name: Upgrade LZ4 to v1.10.0 with ARM64 NEON
