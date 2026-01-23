@@ -227,6 +227,34 @@ jobs:
 
         echo "=== Custom SUSFS patches applied ==="
 
+    - name: Upgrade LZ4 to v1.10.0 with ARM64 NEON
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        echo "=== Upgrading LZ4 to v1.10.0 ==="
+        ZRAM_DIR="$GITHUB_WORKSPACE/zram"
+
+        if [ -d "$ZRAM_DIR" ]; then
+          # Remove old LZ4 library files
+          rm -f lib/lz4/lz4_compress.c lib/lz4/lz4_decompress.c lib/lz4/lz4defs.h lib/lz4/lz4hc_compress.c
+
+          # Copy new LZ4 v1.10.0 library with ARM64 NEON optimization
+          cp -r "$ZRAM_DIR/lz4/"* ./lib/lz4/ 2>/dev/null || true
+          cp -r "$ZRAM_DIR/include/linux/"* ./include/linux/ 2>/dev/null || true
+
+          # Apply LZ4 kernel integration patch
+          if [ -f "$ZRAM_DIR/${{ inputs.kernel_version }}/lz4_1.10.0.patch" ]; then
+            patch -p1 -F3 < "$ZRAM_DIR/${{ inputs.kernel_version }}/lz4_1.10.0.patch" || echo "LZ4 v1.10.0 patch skipped"
+          fi
+
+          # Verify LZ4 NEON assembly
+          if [ -f "lib/lz4/lz4armv8/lz4armv8.S" ]; then
+            echo "SUCCESS: LZ4 ARM64 NEON assembly present"
+          fi
+        else
+          echo "Note: zram directory not found, skipping LZ4 v1.10.0 upgrade"
+        fi
+        echo "=== LZ4 upgrade done ==="
+
     - name: Add LZ4K/LZ4KD Compression
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
@@ -275,11 +303,34 @@ jobs:
         CONFIG_CRYPTO_842=y
         CONFIG_CRYPTO_LZ4K_OPLUS=y
         CONFIG_ZRAM_DEF_COMP_LZ4KD=y
+        CONFIG_IP_NF_TARGET_TTL=y
+        CONFIG_IP6_NF_TARGET_HL=y
+        CONFIG_IP6_NF_MATCH_HL=y
         CONFIG_TCP_CONG_ADVANCED=y
+        CONFIG_TCP_CONG_BBR=y
+        CONFIG_NET_SCH_FQ=y
         CONFIG_TCP_CONG_CUBIC=y
         CONFIG_TCP_CONG_BIC=n
         CONFIG_TCP_CONG_WESTWOOD=y
         CONFIG_TCP_CONG_HTCP=y
+        CONFIG_IP_SET=y
+        CONFIG_IP_SET_MAX=65534
+        CONFIG_IP_SET_BITMAP_IP=y
+        CONFIG_IP_SET_BITMAP_IPMAC=y
+        CONFIG_IP_SET_BITMAP_PORT=y
+        CONFIG_IP_SET_HASH_IP=y
+        CONFIG_IP_SET_HASH_IPMARK=y
+        CONFIG_IP_SET_HASH_IPPORT=y
+        CONFIG_IP_SET_HASH_IPPORTIP=y
+        CONFIG_IP_SET_HASH_IPPORTNET=y
+        CONFIG_IP_SET_HASH_IPMAC=y
+        CONFIG_IP_SET_HASH_MAC=y
+        CONFIG_IP_SET_HASH_NETPORTNET=y
+        CONFIG_IP_SET_HASH_NET=y
+        CONFIG_IP_SET_HASH_NETNET=y
+        CONFIG_IP_SET_HASH_NETPORT=y
+        CONFIG_IP_SET_HASH_NETIFACE=y
+        CONFIG_IP_SET_LIST_SET=y
         DEFEOF
         sed -i 's/^        //' "${{ env.DEFCONFIG }}"
         sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' "${{ env.DEFCONFIG }}"
@@ -325,6 +376,19 @@ jobs:
         echo "CONFIG_BBG=y" >> common/arch/arm64/configs/gki_defconfig
         sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/lockdown/lockdown,baseband_guard/ } }' common/security/Kconfig
         echo "=== BBG Done ==="
+
+    - name: Fix WiFi/BT on Xiaomi 6.6 GKI devices
+      if: inputs.kernel_version == '6.6'
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        echo "=== Adding Xiaomi 6.6 WiFi/BT fix ==="
+        SYMBOL_LIST=android/abi_gki_aarch64_xiaomi
+        if [ -f "$SYMBOL_LIST" ]; then
+          echo "device_find_any_child" >> $SYMBOL_LIST
+          echo "SUCCESS: Added device_find_any_child to Xiaomi symbol list"
+        else
+          echo "Note: Xiaomi symbol list not found, skipping"
+        fi
 
     - name: Apply Module Check Bypass
       working-directory: ${{ env.KERNEL_ROOT }}
