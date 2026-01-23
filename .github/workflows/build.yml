@@ -173,6 +173,16 @@ jobs:
         SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
         git clone https://github.com/Enginex0/susfs4ksu.git -b "$SUSFS_BRANCH" "$SUSFS4KSU"
 
+        echo "=== Applying custom SUSFS command handlers to KernelSU-Next ==="
+        # Apply our custom patch (includes CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT) to KernelSU-Next
+        cd "$KERNEL_ROOT/KernelSU-Next"
+        if [ -f "$SUSFS4KSU/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" ]; then
+          patch -p1 --no-backup-if-mismatch < "$SUSFS4KSU/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
+          echo "Custom SUSFS command handlers (add_sus_kstat_redirect) applied"
+        else
+          echo "WARNING: 10_enable_susfs_for_ksu.patch not found - new commands won't work"
+        fi
+
         echo "=== Applying SUSFS kernel patches ==="
         cd "$KERNEL_ROOT/common"
 
