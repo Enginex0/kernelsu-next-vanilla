@@ -345,26 +345,28 @@ jobs:
         ZRAM_MOD="$ANYKERNEL3/modules/data/adb/modules/zram_config"
         mkdir -p "$ZRAM_MOD/META-INF/com/google/android"
 
-        cat > "$ZRAM_MOD/module.prop" << 'EOF'
-id=zram_config
-name=ZRAM 8GB LZ4KD
-version=1.0
-versionCode=1
-author=Enginex0
-description=Configures ZRAM 8GB with LZ4KD compression at boot
-EOF
+        cat > "$ZRAM_MOD/module.prop" << 'MODEOF'
+        id=zram_config
+        name=ZRAM 8GB LZ4KD
+        version=1.0
+        versionCode=1
+        author=Enginex0
+        description=Configures ZRAM 8GB with LZ4KD compression at boot
+        MODEOF
+        sed -i 's/^        //' "$ZRAM_MOD/module.prop"
 
-        cat > "$ZRAM_MOD/service.sh" << 'EOF'
-#!/system/bin/sh
-sleep 30
-swapoff /dev/block/zram0 2>/dev/null
-echo 1 > /sys/block/zram0/reset
-echo 8 > /sys/block/zram0/max_comp_streams
-echo lz4 > /sys/block/zram0/comp_algorithm
-echo 8589934592 > /sys/block/zram0/disksize
-mkswap /dev/block/zram0
-swapon /dev/block/zram0
-EOF
+        cat > "$ZRAM_MOD/service.sh" << 'SVCEOF'
+        #!/system/bin/sh
+        sleep 30
+        swapoff /dev/block/zram0 2>/dev/null
+        echo 1 > /sys/block/zram0/reset
+        echo 8 > /sys/block/zram0/max_comp_streams
+        echo lz4 > /sys/block/zram0/comp_algorithm
+        echo 8589934592 > /sys/block/zram0/disksize
+        mkswap /dev/block/zram0
+        swapon /dev/block/zram0
+        SVCEOF
+        sed -i 's/^        //' "$ZRAM_MOD/service.sh"
         chmod +x "$ZRAM_MOD/service.sh"
 
         echo '#MAGISK' > "$ZRAM_MOD/META-INF/com/google/android/updater-script"
