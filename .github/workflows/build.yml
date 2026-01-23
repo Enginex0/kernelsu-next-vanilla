@@ -75,10 +75,11 @@ jobs:
         chmod 0755 "$GITHUB_WORKSPACE/git-repo/repo"
         echo "$GITHUB_WORKSPACE/git-repo" >> "$GITHUB_PATH"
 
-    - name: Clone AnyKernel3
+    - name: Clone Dependencies
       run: |
         git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0
         rm -rf AnyKernel3/.git
+        git clone https://github.com/ShirkNeko/SukiSU_patch.git
 
     - name: Initialize and Sync Kernel Source
       working-directory: ${{ env.KERNEL_ROOT }}
@@ -192,6 +193,24 @@ jobs:
 
         echo "=== Custom SUSFS patches applied ==="
 
+    - name: Add LZ4K/LZ4KD Compression
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        SUKISU="$GITHUB_WORKSPACE/SukiSU_patch"
+        KERNEL_VER="${{ inputs.kernel_version }}"
+
+        # Copy LZ4K source files
+        cp -r "$SUKISU/other/zram/lz4k/include/linux/"* ./include/linux/
+        cp -r "$SUKISU/other/zram/lz4k/lib/"* ./lib/
+        cp -r "$SUKISU/other/zram/lz4k/crypto/"* ./crypto/
+        cp -r "$SUKISU/other/zram/lz4k_oplus" ./lib/
+
+        # Apply kernel patches
+        [ -f "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4kd.patch" ] && \
+          patch -p1 -F3 < "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4kd.patch" || true
+        [ -f "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4k_oplus.patch" ] && \
+          patch -p1 -F3 < "$SUKISU/other/zram/zram_patch/$KERNEL_VER/lz4k_oplus.patch" || true
+
     - name: Configure Kernel (All 11 SUSFS Features)
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
@@ -209,7 +228,21 @@ jobs:
         CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
         CONFIG_KSU_SUSFS_UNICODE_FILTER=y
+        CONFIG_ZSMALLOC=y
+        CONFIG_ZRAM=y
+        CONFIG_ZRAM_WRITEBACK=y
+        CONFIG_CRYPTO_LZ4=y
+        CONFIG_CRYPTO_LZ4HC=y
+        CONFIG_CRYPTO_LZ4K=y
+        CONFIG_CRYPTO_LZ4KD=y
+        CONFIG_CRYPTO_842=y
+        CONFIG_CRYPTO_LZ4K_OPLUS=y
+        CONFIG_ZRAM_DEF_COMP_LZ4KD=y
         EOF
+
+        # Ensure ZRAM built-in
+        sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' "${{ env.DEFCONFIG }}"
+        sed -i 's/CONFIG_ZSMALLOC=m/CONFIG_ZSMALLOC=y/g' "${{ env.DEFCONFIG }}"
 
         # Disable defconfig check for build
         if [[ "${{ inputs.kernel_version }}" == "6.12" ]]; then
@@ -307,6 +340,35 @@ jobs:
           exit 1
         fi
 
+    - name: Create ZRAM Module
+      run: |
+        ZRAM_MOD="$ANYKERNEL3/modules/data/adb/modules/zram_config"
+        mkdir -p "$ZRAM_MOD/META-INF/com/google/android"
+
+        cat > "$ZRAM_MOD/module.prop" << 'EOF'
+id=zram_config
+name=ZRAM 8GB LZ4KD
+version=1.0
+versionCode=1
+author=Enginex0
+description=Configures ZRAM 8GB with LZ4KD compression at boot
+EOF
+
+        cat > "$ZRAM_MOD/service.sh" << 'EOF'
+#!/system/bin/sh
+sleep 30
+swapoff /dev/block/zram0 2>/dev/null
+echo 1 > /sys/block/zram0/reset
+echo 8 > /sys/block/zram0/max_comp_streams
+echo lz4 > /sys/block/zram0/comp_algorithm
+echo 8589934592 > /sys/block/zram0/disksize
+mkswap /dev/block/zram0
+swapon /dev/block/zram0
+EOF
+        chmod +x "$ZRAM_MOD/service.sh"
+
+        echo '#MAGISK' > "$ZRAM_MOD/META-INF/com/google/android/updater-script"
+
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
@@ -322,6 +384,6 @@ jobs:
         echo "| Kernel | ${{ inputs.kernel_version }}.${{ env.ACTUAL_SUBLEVEL }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Android | ${{ inputs.android_version }} |" >> $GITHUB_STEP_SUMMARY
         echo "| KSU | KernelSU-Next (next branch) |" >> $GITHUB_STEP_SUMMARY
-        echo "| SUSFS | Upstream (gitlab.com/simonpunk/susfs4ksu) |" >> $GITHUB_STEP_SUMMARY
+        echo "| SUSFS | Enginex0/susfs4ksu (all 11 features) |" >> $GITHUB_STEP_SUMMARY
+        echo "| ZRAM | LZ4K/LZ4KD 8GB |" >> $GITHUB_STEP_SUMMARY
         echo "| Device Profile | ${{ inputs.device_codename }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Stock Spoofing | Enabled via device-profiles.json |" >> $GITHUB_STEP_SUMMARY
