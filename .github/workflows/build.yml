@@ -67,7 +67,6 @@ jobs:
         KERNEL_ROOT=$KERNEL_ROOT
         ANYKERNEL3=$GITHUB_WORKSPACE/AnyKernel3
         SUSFS4KSU=$GITHUB_WORKSPACE/susfs4ksu
-        KERNEL_PATCHES=$GITHUB_WORKSPACE/kernel_patches
         REPO=$GITHUB_WORKSPACE/git-repo/repo
         EOF
 
@@ -81,7 +80,6 @@ jobs:
         git clone https://github.com/WildKernels/AnyKernel3.git -b gki-2.0
         rm -rf AnyKernel3/.git
         git clone https://github.com/ShirkNeko/SukiSU_patch.git
-        git clone https://github.com/WildKernels/kernel_patches.git
 
     - name: Initialize and Sync Kernel Source
       working-directory: ${{ env.KERNEL_ROOT }}
@@ -256,62 +254,6 @@ jobs:
         else
           sed -i 's/check_defconfig//' ./common/build.config.gki
         fi
-
-    - name: Apply Performance Patches
-      working-directory: ${{ env.KERNEL_ROOT }}/common
-      run: |
-        echo "=== Applying Performance Patches ==="
-        MIN_VERSION="5.16"
-
-        cp "$KERNEL_PATCHES/common/optimized_mem_operations.patch" ./
-        patch -p1 --forward < optimized_mem_operations.patch || echo "optimized_mem_operations.patch skipped"
-
-        cp "$KERNEL_PATCHES/common/file_struct_8bytes_align.patch" ./
-        patch -p1 --forward < file_struct_8bytes_align.patch || echo "file_struct_8bytes_align.patch skipped"
-
-        cp "$KERNEL_PATCHES/common/reduce_cache_pressure.patch" ./
-        patch -p1 --forward < reduce_cache_pressure.patch || echo "reduce_cache_pressure.patch skipped"
-
-        if [[ "$(printf '%s\n' "${{ inputs.kernel_version }}" "$MIN_VERSION" | sort -V | head -n1)" = "${{ inputs.kernel_version }}" ]]; then
-          cp "$KERNEL_PATCHES/common/clear_page_16bytes_align.patch" ./
-          patch -p1 --forward < clear_page_16bytes_align.patch || echo "clear_page_16bytes_align.patch skipped"
-        else
-          cp "$KERNEL_PATCHES/common/clear_page_16bytes_align.patch" ./
-          sed -e 's/SYM_FUNC_START_PI(clear_page)/SYM_FUNC_START_PI(__pi_clear_page)/' clear_page_16bytes_align.patch > clear_page_16bytes_align__pi.patch
-          patch -p1 -F3 --forward < clear_page_16bytes_align__pi.patch || echo "clear_page_16bytes_align__pi.patch skipped"
-        fi
-
-        echo "=== Performance Patches Applied ==="
-
-    - name: Add BBG (Baseband Guard)
-      working-directory: ${{ env.KERNEL_ROOT }}
-      run: |
-        echo "=== Adding BBG (Baseband Guard) ==="
-        curl -LSs https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
-        echo "CONFIG_BBG=y" >> common/arch/arm64/configs/gki_defconfig
-        sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/lockdown/lockdown,baseband_guard/ } }' common/security/Kconfig
-        echo "=== BBG Added ==="
-
-    - name: Apply Module Check Bypass
-      working-directory: ${{ env.KERNEL_ROOT }}
-      run: |
-        echo "=== Applying Module Check Bypass ==="
-        if [[ "${{ inputs.kernel_version }}" == "6.1" || "${{ inputs.kernel_version }}" == "6.6" || "${{ inputs.kernel_version }}" == "6.12" ]]; then
-          TARGET_FILE="$KERNEL_ROOT/common/kernel/module/version.c"
-        else
-          TARGET_FILE="$KERNEL_ROOT/common/kernel/module.c"
-        fi
-
-        echo "Applying bypass to $TARGET_FILE"
-        sed -i '/bad_version:/{:a;n;/return 0;/{s/return 0;/return 1;/;b};ba}' "$TARGET_FILE"
-
-        if grep -A 5 "bad_version:" "$TARGET_FILE" | grep -q "return 1;"; then
-          echo "SUCCESS: Module check bypass verified"
-        else
-          echo "WARNING: Module check bypass may not have applied correctly"
-          grep -A 5 "bad_version:" "$TARGET_FILE" || true
-        fi
-        echo "=== Module Check Bypass Applied ==="
 
     - name: Clean Build Flags
       working-directory: ${{ env.KERNEL_ROOT }}
