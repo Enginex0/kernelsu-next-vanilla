@@ -287,10 +287,8 @@ jobs:
 
         echo "=== All NoMount hooks injected ==="
 
-        # Add config option
-        echo 'config FS_DCACHE_PREFETCH' >> fs/Kconfig
-        echo '    bool "Enable VFS dentry cache prefetching"' >> fs/Kconfig
-        echo '    default y' >> fs/Kconfig
+        # Enable NoMount in defconfig (Kconfig entry is in nomount-core patch)
+        echo "CONFIG_FS_DCACHE_PREFETCH=y" >> arch/arm64/configs/gki_defconfig
 
         # Validate hooks
         echo "=== Validating NoMount hooks ==="
@@ -367,7 +365,6 @@ jobs:
         CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
         CONFIG_KSU_SUSFS_UNICODE_FILTER=y
-        CONFIG_FS_DCACHE_PREFETCH=y
         CONFIG_TMPFS_XATTR=y
         CONFIG_TMPFS_POSIX_ACL=y
         CONFIG_ZSMALLOC=y
