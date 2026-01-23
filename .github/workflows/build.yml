@@ -152,6 +152,17 @@ jobs:
           echo "WARNING: supercalls.c not found at $SUPERCALLS_FILE"
         fi
 
+        # Add ksu_handle_sys_newfstatat stub - SUSFS references it but KernelSU-Next doesn't define it
+        KSUD_FILE="$KERNEL_ROOT/KernelSU-Next/kernel/ksud.c"
+        if [ -f "$KSUD_FILE" ]; then
+          if ! grep -q "ksu_handle_sys_newfstatat" "$KSUD_FILE"; then
+            echo "Adding ksu_handle_sys_newfstatat stub to ksud.c..."
+            # Add stub function after ksu_handle_vfs_fstat
+            awk '/void ksu_handle_vfs_fstat/{found=1} found && /^}/{print; print "void ksu_handle_sys_newfstatat(int fd, loff_t *kstat_size_ptr) { }"; found=0; next}1' "$KSUD_FILE" > "$KSUD_FILE.tmp" && mv "$KSUD_FILE.tmp" "$KSUD_FILE"
+            echo "ksu_handle_sys_newfstatat stub added"
+          fi
+        fi
+
     - name: Apply Custom SUSFS Kernel Patches (All 11 Features)
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
