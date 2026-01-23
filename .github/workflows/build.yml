@@ -409,6 +409,40 @@ jobs:
         fi
         echo "=== Module Check Bypass Done ==="
 
+    - name: Add Android 16/6.12 ashmem Exports
+      if: inputs.android_version == 'android16' && inputs.kernel_version == '6.12'
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        echo "=== Adding ashmem exports for Android 16 ==="
+        FILE=common/drivers/staging/android/ashmem.c
+        if [[ -f "$FILE" ]] && ! grep -q 'is_ashmem_file' "$FILE"; then
+          cat >>"$FILE" <<'ASHMEM_EOF'
+        bool is_ashmem_file(struct file *file) { return false; }
+        int ashmem_area_name(struct file *file, char *name) { return 0; }
+        long ashmem_area_size(struct file *file) { return 0; }
+        struct file *ashmem_area_vmfile(struct file *file) { return NULL; }
+        EXPORT_SYMBOL_GPL(is_ashmem_file);
+        EXPORT_SYMBOL_GPL(ashmem_area_name);
+        EXPORT_SYMBOL_GPL(ashmem_area_size);
+        EXPORT_SYMBOL_GPL(ashmem_area_vmfile);
+        ASHMEM_EOF
+          sed -i 's/^        //' "$FILE"
+          echo "SUCCESS: ashmem exports added"
+        fi
+
+        # Handle Rust binder configuration
+        if [ -f common/drivers/android/binder/Makefile ]; then
+          perl -i -0777 -pe 's/\$\(\s*CONFIG_ANDROID_BINDER_IPC_RUST\s*\)/m/' common/drivers/android/binder/Makefile
+          perl -i -pe 's/^rust_binder-\$\([^)]+\)\s*:=/rust_binder-y :=/' common/drivers/android/binder/Makefile
+          rustup set profile minimal
+          rustup update nightly
+          rustup default nightly
+          rustup target add aarch64-unknown-none
+        else
+          perl -i -0777 -pe 's/\$\(\s*CONFIG_ANDROID_BINDER_IPC_RUST\s*\)/m/' common/drivers/android/Makefile 2>/dev/null || true
+        fi
+        echo "=== Android 16 ashmem exports done ==="
+
     - name: Clean Build Flags
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
@@ -498,36 +532,165 @@ jobs:
           exit 1
         fi
 
-    - name: Create ZRAM Module
+    - name: Create ZRAM Module (Full Version)
       run: |
+        echo "=== Creating KSU ZRAM module ==="
         ZRAM_MOD="$ANYKERNEL3/modules/data/adb/modules/zram_config"
         mkdir -p "$ZRAM_MOD/META-INF/com/google/android"
 
-        cat > "$ZRAM_MOD/module.prop" << 'MODEOF'
+        # Create module.prop
+        cat > "$ZRAM_MOD/module.prop" << 'MODPROP'
         id=zram_config
-        name=ZRAM 8GB LZ4KD
+        name=ZRAM 8GB LZ4 Configuration
         version=1.0
         versionCode=1
         author=Enginex0
-        description=Configures ZRAM 8GB with LZ4KD compression at boot
-        MODEOF
+        description=Configures ZRAM with 8GB size and LZ4 compression at boot. Compatible with Magisk/KernelSU.
+        MODPROP
         sed -i 's/^        //' "$ZRAM_MOD/module.prop"
 
-        cat > "$ZRAM_MOD/service.sh" << 'SVCEOF'
+        # Create service.sh with detailed logging
+        cat > "$ZRAM_MOD/service.sh" << 'SERVICESH'
         #!/system/bin/sh
+        MODDIR=${0%/*}
+        LOG="$MODDIR/zram.log"
+
+        log() {
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG"
+        }
+
+        ZRAM_SIZE=8589934592
+        ZRAM_ALGO=lz4
+        MAX_STREAMS=8
+
+        log "========================================="
+        log "=== ZRAM Configuration Service Start ==="
+        log "========================================="
+
+        log "Waiting for system initialization..."
         sleep 30
+
+        log "Stopping existing ZRAM swap..."
         swapoff /dev/block/zram0 2>/dev/null
-        echo 1 > /sys/block/zram0/reset
-        echo 8 > /sys/block/zram0/max_comp_streams
-        echo lz4 > /sys/block/zram0/comp_algorithm
-        echo 8589934592 > /sys/block/zram0/disksize
-        mkswap /dev/block/zram0
-        swapon /dev/block/zram0
-        SVCEOF
+        sleep 2
+
+        log "Resetting ZRAM device..."
+        echo 1 > /sys/block/zram0/reset 2>/dev/null
+        sleep 1
+
+        log "Setting max_comp_streams: $MAX_STREAMS"
+        echo "$MAX_STREAMS" > /sys/block/zram0/max_comp_streams 2>/dev/null
+
+        log "Setting compression algorithm: $ZRAM_ALGO"
+        echo "$ZRAM_ALGO" > /sys/block/zram0/comp_algorithm 2>/dev/null
+
+        log "Setting disksize: $ZRAM_SIZE bytes (8GB)"
+        echo "$ZRAM_SIZE" > /sys/block/zram0/disksize 2>/dev/null
+
+        log "Initializing swap partition..."
+        mkswap /dev/block/zram0 > /dev/null 2>&1
+
+        log "Enabling swap..."
+        swapon /dev/block/zram0 > /dev/null 2>&1
+
+        ACTUAL_SIZE=$(cat /sys/block/zram0/disksize 2>/dev/null)
+        ACTUAL_ALGO=$(cat /sys/block/zram0/comp_algorithm 2>/dev/null | grep -o '\[.*\]' | tr -d '[]')
+        [ -z "$ACTUAL_ALGO" ] && ACTUAL_ALGO=$(cat /sys/block/zram0/comp_algorithm 2>/dev/null)
+
+        log "----------------------------------------"
+        log "ZRAM Configuration Result:"
+        log "  Size: $ACTUAL_SIZE bytes"
+        log "  Algorithm: $ACTUAL_ALGO"
+        log "----------------------------------------"
+
+        MEM_INFO=$(free -h 2>/dev/null | grep -E "Mem:|Swap:")
+        log "Memory Status:"
+        log "$MEM_INFO"
+
+        log "=== ZRAM Configuration Complete ==="
+        SERVICESH
         sed -i 's/^        //' "$ZRAM_MOD/service.sh"
         chmod +x "$ZRAM_MOD/service.sh"
 
+        # Create customize.sh
+        cat > "$ZRAM_MOD/customize.sh" << 'CUSTOMIZESH'
+        #!/system/bin/sh
+        ui_print "========================================="
+        ui_print "   ZRAM 8GB LZ4 Configuration Module"
+        ui_print "   Author: Enginex0"
+        ui_print "========================================="
+        ui_print ""
+        ui_print "Configuration:"
+        ui_print "  - ZRAM Size: 8GB"
+        ui_print "  - Algorithm: LZ4"
+        ui_print "  - Streams: 8"
+        ui_print ""
+        ui_print "The module will configure ZRAM at boot."
+        ui_print ""
+        set_perm_recursive $MODPATH 0 0 0755 0644
+        set_perm $MODPATH/service.sh 0 0 0755
+        CUSTOMIZESH
+        sed -i 's/^        //' "$ZRAM_MOD/customize.sh"
+        chmod +x "$ZRAM_MOD/customize.sh"
+
+        # Create updater-script
         echo '#MAGISK' > "$ZRAM_MOD/META-INF/com/google/android/updater-script"
+
+        # Create update-binary for full Magisk compatibility
+        cat > "$ZRAM_MOD/META-INF/com/google/android/update-binary" << 'UPDATEBIN'
+        #!/sbin/sh
+        umask 022
+        TMPDIR=/dev/tmp
+        rm -rf $TMPDIR 2>/dev/null
+        mkdir -p $TMPDIR
+        ui_print() { echo "$1"; }
+        require_new_magisk() {
+          ui_print "*******************************"
+          ui_print " Please install Magisk v20.4+! "
+          ui_print "*******************************"
+          exit 1
+        }
+        OUTFD=$2
+        ZIPFILE=$3
+        mount /data 2>/dev/null
+        [ -f /data/adb/magisk/util_functions.sh ] || require_new_magisk
+        . /data/adb/magisk/util_functions.sh
+        [ $MAGISK_VER_CODE -lt 20400 ] && require_new_magisk
+        setup_flashable
+        mount_partitions
+        api_level_arch_detect
+        $BOOTMODE && boot_actions || recovery_actions
+        unzip -o "$ZIPFILE" module.prop -d $TMPDIR >&2
+        [ ! -f $TMPDIR/module.prop ] && abort "! Unable to extract zip file!"
+        $BOOTMODE && MODDIRNAME=modules_update || MODDIRNAME=modules
+        MODULEROOT=$NVBASE/$MODDIRNAME
+        MODID=$(grep_prop id $TMPDIR/module.prop)
+        MODPATH=$MODULEROOT/$MODID
+        rm -rf $MODPATH 2>/dev/null
+        mkdir -p $MODPATH
+        ui_print "- Extracting module files"
+        unzip -o "$ZIPFILE" -d $MODPATH >&2
+        rm -rf $MODPATH/META-INF 2>/dev/null
+        set_perm_recursive $MODPATH 0 0 0755 0644
+        [ -f $MODPATH/service.sh ] && set_perm $MODPATH/service.sh 0 0 0755
+        $BOOTMODE && {
+          mktouch $NVBASE/modules/$MODID/update
+          cp -af $MODPATH/module.prop $NVBASE/modules/$MODID/module.prop
+        }
+        [ -f $MODPATH/sepolicy.rule ] && {
+          ui_print "- Installing custom sepolicy rules"
+          copy_sepolicy_rules
+        }
+        cd /
+        $BOOTMODE || recovery_cleanup
+        rm -rf $TMPDIR
+        ui_print "- Done"
+        exit 0
+        UPDATEBIN
+        sed -i 's/^        //' "$ZRAM_MOD/META-INF/com/google/android/update-binary"
+        chmod +x "$ZRAM_MOD/META-INF/com/google/android/update-binary"
+
+        echo "=== ZRAM module created ==="
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
