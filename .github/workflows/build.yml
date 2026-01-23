@@ -188,12 +188,47 @@ jobs:
           echo "ERROR: SUSFS patch not found: $SUSFS_PATCH" && exit 1
         fi
 
-        # Apply unicode filter hooks patch (must be after main SUSFS patch)
-        UNICODE_PATCH="$SUSFS4KSU/kernel_patches/fs/51_add_susfs_unicode_filter_hooks.patch"
-        if [ -f "$UNICODE_PATCH" ]; then
-          echo "=== Applying Unicode filter hooks ==="
-          patch -p1 --no-backup-if-mismatch < "$UNICODE_PATCH"
+        # Apply unicode filter hooks using sed injection (more reliable than patch)
+        echo "=== Injecting Unicode filter hooks ==="
+
+        # fs/open.c - add include after internal.h
+        if ! grep -q "CONFIG_KSU_SUSFS_UNICODE_FILTER" fs/open.c; then
+          sed -i '/#include "internal.h"/a\
+#ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
+#include <linux/susfs.h>\
+#endif' fs/open.c
         fi
+
+        # fs/open.c - add check in do_faccessat
+        sed -i '/^static int do_faccessat/,/^{/{/^{/a\
+#ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
+\tif (susfs_check_unicode_bypass(filename)) { return -ENOENT; }\
+#endif
+}' fs/open.c
+
+        # fs/open.c - add check in do_sys_openat2
+        sed -i '/^static long do_sys_openat2/,/struct filename \*tmp;/{/struct filename \*tmp;/a\
+#ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
+\tif (susfs_check_unicode_bypass(filename)) { return -ENOENT; }\
+#endif
+}' fs/open.c
+
+        # fs/stat.c - add include
+        if ! grep -q "CONFIG_KSU_SUSFS_UNICODE_FILTER" fs/stat.c; then
+          sed -i '/#include "internal.h"/i\
+#ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
+#include <linux/susfs.h>\
+#endif' fs/stat.c
+        fi
+
+        # fs/stat.c - add check in vfs_fstatat
+        sed -i '/^int vfs_fstatat/,/^{/{/^{/a\
+#ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
+\tif (filename \&\& susfs_check_unicode_bypass(filename)) { return -ENOENT; }\
+#endif
+}' fs/stat.c
+
+        echo "=== Unicode filter hooks injected ==="
 
         # Fix for android12 5.10 <= 209
         if [[ "${{ inputs.android_version }}" == "android12" && "${{ inputs.kernel_version }}" == "5.10" ]]; then
