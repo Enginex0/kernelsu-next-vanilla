@@ -304,6 +304,22 @@ jobs:
         # Apply NoMount comprehensive bug fixes (surgical patches)
         echo "=== Applying NoMount Comprehensive Bug Fixes ==="
 
+        # Patch 0: CRITICAL - Null i_sb checks (prevents kernel panic on sockets/pipes)
+        echo "→ Applying critical NULL i_sb fix..."
+        PATCH_FILE="$NOMOUNT_VFS/patches/fix-null-isb.patch"
+        if [ -f "$PATCH_FILE" ]; then
+          patch -p1 -F3 < "$PATCH_FILE"
+          if grep -q '!inode->i_sb' fs/vfs_dcache.c; then
+            echo "  ✓ NULL i_sb: Checks added for socket/pipe safety"
+          else
+            echo "  ✗ ERROR: NULL i_sb fix may not have applied"
+            exit 1
+          fi
+        else
+          echo "  ✗ ERROR: fix-null-isb.patch not found - THIS WILL CRASH!"
+          exit 1
+        fi
+
         # Patch 1: Complete Memory Safety (3 P0 bugs)
         echo "→ Applying memory safety fixes..."
         PATCH_FILE="$NOMOUNT_VFS/patches/nomount-complete-memory-safety.patch"
