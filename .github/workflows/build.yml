@@ -331,23 +331,8 @@ jobs:
           exit 1
         fi
 
-        # Patch 3: Logic API Fix (1 P1 bug - slab corruption)
-        echo "→ Applying logic API fixes..."
-        PATCH_FILE="$NOMOUNT_VFS/patches/nomount-logic-api-fix.patch"
-        if [ -f "$PATCH_FILE" ]; then
-          patch -p1 -F3 < "$PATCH_FILE"
-          if grep -q '__putname(page_buf)' fs/vfs_dcache.c; then
-            echo "  ✓ Logic: __putname API fix applied (prevents slab corruption)"
-          else
-            echo "  ⚠ WARNING: __putname fix may not be fully applied"
-          fi
-        else
-          echo "  ✗ ERROR: Logic fix patch not found"
-          exit 1
-        fi
-
         echo "✅ NoMount Comprehensive Bug Fixes Complete"
-        echo "   Fixed: 6 P0/P1 bugs (3 memory, 2 concurrency, 1 logic)"
+        echo "   Fixed: 5 P0/P1 bugs (3 memory, 2 concurrency)"
 
     - name: Upgrade LZ4 to v1.10.0 with ARM64 NEON
       working-directory: ${{ env.KERNEL_ROOT }}/common
