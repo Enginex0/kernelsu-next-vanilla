@@ -316,23 +316,7 @@ jobs:
           exit 1
         fi
 
-# DISABLED:         # Patch 2: Performance Hotpath Fix (1 P0 bug - 10x slowdown)
-# DISABLED:         echo "→ Applying performance hotpath fixes..."
-# DISABLED:         PATCH_FILE="$NOMOUNT_VFS/patches/nomount-performance-hotpath-fix.patch"
-# DISABLED:         if [ -f "$PATCH_FILE" ]; then
-# DISABLED:           patch -p1 -F3 < "$PATCH_FILE"
-# DISABLED:           HOTPATH_PRINFO=$(grep -c 'pr_info.*IS_INJECTED\|pr_info.*SPOOF_STAT.*ENTER' fs/vfs_dcache.c || true)
-# DISABLED:           if [ "$HOTPATH_PRINFO" -eq 0 ]; then
-# DISABLED:             echo "  ✓ Performance: All hot path pr_info() removed (10x speedup)"
-# DISABLED:           else
-# DISABLED:             echo "  ⚠ WARNING: $HOTPATH_PRINFO pr_info() calls remain in hot paths"
-# DISABLED:           fi
-# DISABLED:         else
-# DISABLED:           echo "  ✗ ERROR: Performance patch not found"
-# DISABLED:           exit 1
-# DISABLED:         fi
-# DISABLED: 
-        # Patch 3: Concurrency Barriers (2 P1 bugs - ARM64 memory ordering)
+        # Patch 2: Concurrency Barriers (2 P1 bugs - ARM64 memory ordering)
         echo "→ Applying concurrency memory barriers..."
         PATCH_FILE="$NOMOUNT_VFS/patches/nomount-concurrency-barriers.patch"
         if [ -f "$PATCH_FILE" ]; then
@@ -347,7 +331,7 @@ jobs:
           exit 1
         fi
 
-        # Patch 4: Logic API Fix (1 P1 bug - slab corruption)
+        # Patch 3: Logic API Fix (1 P1 bug - slab corruption)
         echo "→ Applying logic API fixes..."
         PATCH_FILE="$NOMOUNT_VFS/patches/nomount-logic-api-fix.patch"
         if [ -f "$PATCH_FILE" ]; then
@@ -363,7 +347,7 @@ jobs:
         fi
 
         echo "✅ NoMount Comprehensive Bug Fixes Complete"
-        echo "   Fixed: 6 P0/P1 bugs (3 memory, 2 concurrency, 1 logic) [performance patch disabled - needs regeneration]"
+        echo "   Fixed: 6 P0/P1 bugs (3 memory, 2 concurrency, 1 logic)"
 
     - name: Upgrade LZ4 to v1.10.0 with ARM64 NEON
       working-directory: ${{ env.KERNEL_ROOT }}/common
