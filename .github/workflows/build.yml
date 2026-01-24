@@ -837,6 +837,28 @@ jobs:
 
         echo "=== ZRAM module created ==="
 
+    - name: Check for Patch Rejects
+      if: always()
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        echo "=== Scanning for patch reject files ==="
+        REJECTS=$(find . -name "*.rej" -type f 2>/dev/null)
+        if [ -n "$REJECTS" ]; then
+          echo "⚠️ WARNING: Found patch reject files!"
+          echo "$REJECTS"
+          echo ""
+          echo "=== Reject file contents ==="
+          find . -name "*.rej" -exec echo "--- {} ---" \; -exec cat {} \;
+          echo ""
+          echo "## ⚠️ Patch Rejects Found" >> $GITHUB_STEP_SUMMARY
+          echo "The following patches had reject hunks:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "$REJECTS" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        else
+          echo "✓ No patch rejects found"
+        fi
+
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
