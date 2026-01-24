@@ -837,27 +837,46 @@ jobs:
 
         echo "=== ZRAM module created ==="
 
-    - name: Check for Patch Rejects
+    - name: Scan and Collect Patch Rejects
       if: always()
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
         echo "=== Scanning for patch reject files ==="
-        REJECTS=$(find . -name "*.rej" -type f 2>/dev/null)
-        if [ -n "$REJECTS" ]; then
-          echo "⚠️ WARNING: Found patch reject files!"
-          echo "$REJECTS"
-          echo ""
-          echo "=== Reject file contents ==="
-          find . -name "*.rej" -exec echo "--- {} ---" \; -exec cat {} \;
-          echo ""
+        REJECTS_DIR="$GITHUB_WORKSPACE/patch-rejects"
+        mkdir -p "$REJECTS_DIR"
+        mapfile -t REJS < <(find . -type f -name '*.rej')
+        REJ_COUNT=${#REJS[@]}
+        echo "Found $REJ_COUNT .rej files"
+        echo "REJ_COUNT=$REJ_COUNT" >> $GITHUB_ENV
+        if [ "$REJ_COUNT" -gt 0 ]; then
+          for REJ in "${REJS[@]}"; do
+            REL="${REJ#./}"
+            DEST="$REJECTS_DIR/$REL"
+            mkdir -p "$(dirname "$DEST")"
+            cp "$REJ" "$DEST"
+            ORIG="${REJ%.rej}"
+            if [ -f "$ORIG" ]; then
+              ORIG_DEST="$REJECTS_DIR/${REL%.rej}"
+              mkdir -p "$(dirname "$ORIG_DEST")"
+              cp "$ORIG" "$ORIG_DEST"
+            fi
+          done
           echo "## ⚠️ Patch Rejects Found" >> $GITHUB_STEP_SUMMARY
-          echo "The following patches had reject hunks:" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "$REJECTS" >> $GITHUB_STEP_SUMMARY
+          printf '%s\n' "${REJS[@]}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
         else
           echo "✓ No patch rejects found"
         fi
+
+    - name: Upload Rejects
+      if: always() && env.REJ_COUNT > 0
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.FILE_NAME }}-Rejects
+        path: patch-rejects/
+        if-no-files-found: ignore
+        compression-level: 9
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
