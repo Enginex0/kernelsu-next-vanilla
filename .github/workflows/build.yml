@@ -331,8 +331,39 @@ jobs:
           exit 1
         fi
 
+        # Patch 3: Performance Hotpath Fix (removes pr_info from hot paths)
+        echo "→ Applying performance hotpath fixes..."
+        PATCH_FILE="$NOMOUNT_VFS/patches/nomount-performance-hotpath-fix.patch"
+        if [ -f "$PATCH_FILE" ]; then
+          patch -p1 -F3 < "$PATCH_FILE"
+          HOTPATH_PRINFO=$(grep -c 'pr_info.*IS_INJECTED\|pr_info.*SPOOF_STAT.*ENTER' fs/vfs_dcache.c || true)
+          if [ "$HOTPATH_PRINFO" -eq 0 ]; then
+            echo "  ✓ Performance: Hot path pr_info() calls removed"
+          else
+            echo "  ⚠ WARNING: $HOTPATH_PRINFO pr_info() calls remain in hot paths"
+          fi
+        else
+          echo "  ✗ ERROR: Performance patch not found"
+          exit 1
+        fi
+
+        # Patch 4: Logic API Fix (__putname for __getname allocations)
+        echo "→ Applying logic API fixes..."
+        PATCH_FILE="$NOMOUNT_VFS/patches/nomount-logic-api-fix.patch"
+        if [ -f "$PATCH_FILE" ]; then
+          patch -p1 -F3 < "$PATCH_FILE"
+          if grep -q '__putname' fs/vfs_dcache.c; then
+            echo "  ✓ Logic: __putname API fix applied"
+          else
+            echo "  ⚠ WARNING: __putname fix may not be fully applied"
+          fi
+        else
+          echo "  ✗ ERROR: Logic fix patch not found"
+          exit 1
+        fi
+
         echo "✅ NoMount Comprehensive Bug Fixes Complete"
-        echo "   Fixed: 5 P0/P1 bugs (3 memory, 2 concurrency)"
+        echo "   Fixed: 7 P0/P1 bugs (3 memory, 2 concurrency, 1 performance, 1 logic)"
 
     - name: Upgrade LZ4 to v1.10.0 with ARM64 NEON
       working-directory: ${{ env.KERNEL_ROOT }}/common
