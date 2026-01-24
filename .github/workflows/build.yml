@@ -302,23 +302,8 @@ jobs:
         echo "🎉 SUSFS + NoMount Wedding Complete! 🎉"
 
         # Apply NoMount comprehensive bug fixes (surgical patches)
+        # IMPORTANT: fix-null-isb.patch must be applied LAST due to line conflicts
         echo "=== Applying NoMount Comprehensive Bug Fixes ==="
-
-        # Patch 0: CRITICAL - Null i_sb checks (prevents kernel panic on sockets/pipes)
-        echo "→ Applying critical NULL i_sb fix..."
-        PATCH_FILE="$NOMOUNT_VFS/patches/fix-null-isb.patch"
-        if [ -f "$PATCH_FILE" ]; then
-          patch -p1 -F3 < "$PATCH_FILE"
-          if grep -q '!inode->i_sb' fs/vfs_dcache.c; then
-            echo "  ✓ NULL i_sb: Checks added for socket/pipe safety"
-          else
-            echo "  ✗ ERROR: NULL i_sb fix may not have applied"
-            exit 1
-          fi
-        else
-          echo "  ✗ ERROR: fix-null-isb.patch not found - THIS WILL CRASH!"
-          exit 1
-        fi
 
         # Patch 1: Complete Memory Safety (3 P0 bugs)
         echo "→ Applying memory safety fixes..."
@@ -378,8 +363,34 @@ jobs:
           exit 1
         fi
 
+        # Patch 5: CRITICAL - Null i_sb checks (using sed for reliability - avoids patch conflicts)
+        echo "→ Applying critical NULL i_sb fix via sed injection..."
+        # Add !inode->i_sb check to nomount_is_injected_file()
+        sed -i 's/if (!inode || NOMOUNT_DISABLED())/if (!inode || !inode->i_sb || NOMOUNT_DISABLED())/g' fs/vfs_dcache.c
+        # Add !inode->i_sb check to nomount_spoof_statfs()
+        sed -i '/^int nomount_spoof_statfs/,/^{/{n;n;n;/return 0;/a\
+\tif (!inode->i_sb) {\
+\t\tNM_DBG("spoof_statfs: null i_sb, skipping\\n");\
+\t\treturn 0;\
+\t}
+}' fs/vfs_dcache.c
+        # Add !inode->i_sb check to nomount_get_spoofed_selinux_context()
+        sed -i '/^const char \*nomount_get_spoofed_selinux_context/,/^{/{n;n;n;/return NULL;/a\
+\tif (!inode->i_sb) {\
+\t\tNM_DBG("get_selinux: null i_sb, skipping\\n");\
+\t\treturn NULL;\
+\t}
+}' fs/vfs_dcache.c
+        if grep -q '!inode->i_sb' fs/vfs_dcache.c; then
+          ISB_CHECKS=$(grep -c '!inode->i_sb' fs/vfs_dcache.c || true)
+          echo "  ✓ NULL i_sb: $ISB_CHECKS checks added for socket/pipe safety"
+        else
+          echo "  ✗ ERROR: NULL i_sb fix failed!"
+          exit 1
+        fi
+
         echo "✅ NoMount Comprehensive Bug Fixes Complete"
-        echo "   Fixed: 7 P0/P1 bugs (3 memory, 2 concurrency, 1 performance, 1 logic)"
+        echo "   Fixed: 8 P0/P1 bugs (4 memory, 2 concurrency, 1 performance, 1 logic)"
 
     - name: Upgrade LZ4 to v1.10.0 with ARM64 NEON
       working-directory: ${{ env.KERNEL_ROOT }}/common
