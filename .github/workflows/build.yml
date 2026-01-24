@@ -306,7 +306,7 @@ jobs:
 
         # Patch 1: Complete Memory Safety (3 P0 bugs)
         echo "→ Applying memory safety fixes..."
-        PATCH_FILE="$GITHUB_WORKSPACE/nomount-vfs-clone/patches/nomount-complete-memory-safety.patch"
+        PATCH_FILE="$NOMOUNT_VFS/patches/nomount-complete-memory-safety.patch"
         if [ -f "$PATCH_FILE" ]; then
           patch -p1 -F3 < "$PATCH_FILE"
           NULL_CHECKS=$(grep -c '!inode->i_sb\|!vpath.mnt\|!path.dentry->d_sb' fs/vfs_dcache.c || true)
@@ -318,7 +318,7 @@ jobs:
 
         # Patch 2: Performance Hotpath Fix (1 P0 bug - 10x slowdown)
         echo "→ Applying performance hotpath fixes..."
-        PATCH_FILE="$GITHUB_WORKSPACE/nomount-vfs-clone/patches/nomount-performance-hotpath-fix.patch"
+        PATCH_FILE="$NOMOUNT_VFS/patches/nomount-performance-hotpath-fix.patch"
         if [ -f "$PATCH_FILE" ]; then
           patch -p1 -F3 < "$PATCH_FILE"
           HOTPATH_PRINFO=$(grep -c 'pr_info.*IS_INJECTED\|pr_info.*SPOOF_STAT.*ENTER' fs/vfs_dcache.c || true)
@@ -334,7 +334,7 @@ jobs:
 
         # Patch 3: Concurrency Barriers (2 P1 bugs - ARM64 memory ordering)
         echo "→ Applying concurrency memory barriers..."
-        PATCH_FILE="$GITHUB_WORKSPACE/nomount-vfs-clone/patches/nomount-concurrency-barriers.patch"
+        PATCH_FILE="$NOMOUNT_VFS/patches/nomount-concurrency-barriers.patch"
         if [ -f "$PATCH_FILE" ]; then
           patch -p1 -F3 < "$PATCH_FILE"
           if grep -q 'smp_wmb()' fs/vfs_dcache.c && grep -q 'READ_ONCE.*real_ino' fs/vfs_dcache.c; then
@@ -349,7 +349,7 @@ jobs:
 
         # Patch 4: Logic API Fix (1 P1 bug - slab corruption)
         echo "→ Applying logic API fixes..."
-        PATCH_FILE="$GITHUB_WORKSPACE/nomount-vfs-clone/patches/nomount-logic-api-fix.patch"
+        PATCH_FILE="$NOMOUNT_VFS/patches/nomount-logic-api-fix.patch"
         if [ -f "$PATCH_FILE" ]; then
           patch -p1 -F3 < "$PATCH_FILE"
           if grep -q '__putname(page_buf)' fs/vfs_dcache.c; then
