@@ -166,6 +166,28 @@ jobs:
           fi
         fi
 
+        # Add missing Kconfig options not in KernelSU-Next upstream
+        KCONFIG_FILE="$KERNEL_ROOT/KernelSU-Next/kernel/Kconfig"
+        if [ -f "$KCONFIG_FILE" ] && ! grep -q "KSU_SUSFS_UNICODE_FILTER" "$KCONFIG_FILE"; then
+          echo "Adding missing SUSFS Kconfig options..."
+          cat >> "$KCONFIG_FILE" << 'KCONFIG_EOF'
+        config KSU_SUSFS_UNICODE_FILTER
+            bool "Enable UNICODE_FILTER"
+            depends on KSU_SUSFS
+            default y
+            help
+              Filter paths containing suspicious unicode characters.
+        config KSU_SUSFS_SUS_PROC_NET_UNIX
+            bool "Enable SUS_PROC_NET_UNIX"
+            depends on KSU_SUSFS
+            default y
+            help
+              Hide suspicious unix sockets from /proc/net/unix.
+        KCONFIG_EOF
+          sed -i 's/^        //' "$KCONFIG_FILE"
+          echo "UNICODE_FILTER and SUS_PROC_NET_UNIX Kconfig options added"
+        fi
+
     - name: Apply Custom SUSFS Kernel Patches (All 11 Features)
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |

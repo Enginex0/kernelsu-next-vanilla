@@ -1,0 +1,6 @@
+id=input_boost
+name=Input Boost Daemon
+version=2.3.1
+versionCode=6
+author=Enginex0
+description=Native C daemon - Boosts CPU frequency on touch input for improved responsiveness

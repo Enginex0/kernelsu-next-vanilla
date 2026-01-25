@@ -1,0 +1,132 @@
+#!/sbin/sh
+
+#################
+# Initialization
+#################
+
+umask 022
+
+# Global vars
+TMPDIR=/dev/tmp
+PERSISTDIR=/sbin/.magisk/mirror/persist
+
+rm -rf $TMPDIR 2>/dev/null
+mkdir -p $TMPDIR
+
+# echo before loading util_functions
+ui_print() { echo "$1"; }
+
+require_new_magisk() {
+  ui_print "*******************************"
+  ui_print " Please install Magisk v20.4+! "
+  ui_print "*******************************"
+  exit 1
+}
+
+is_legacy_script() {
+  unset SKIP_MOUNT
+  unset PROPFILE
+  unset POSTFSDATA
+  unset LATESTARTSERVICE
+  . $1
+  [ -n "$SKIP_MOUNT" ] || [ -n "$PROPFILE" ] || [ -n "$POSTFSDATA" ] || [ -n "$LATESTARTSERVICE" ]
+}
+
+##############
+# Environment
+##############
+
+OUTFD=$2
+ZIPFILE=$3
+
+mount /data 2>/dev/null
+
+# Load utility functions
+[ -f /data/adb/magisk/util_functions.sh ] || require_new_magisk
+. /data/adb/magisk/util_functions.sh
+[ $MAGISK_VER_CODE -lt 20400 ] && require_new_magisk
+
+# Preperation for flashable zips
+setup_flashable
+
+# Mount partitions
+mount_partitions
+
+# Detect version and architecture
+api_level_arch_detect
+
+# Setup busybox and binaries
+$BOOTMODE && boot_actions || recovery_actions
+
+##############
+# Preparation
+##############
+
+# Extract prop file
+unzip -o "$ZIPFILE" module.prop -d $TMPDIR >&2
+[ ! -f $TMPDIR/module.prop ] && abort "! Unable to extract zip file!"
+
+$BOOTMODE && MODDIRNAME=modules_update || MODDIRNAME=modules
+MODULEROOT=$NVBASE/$MODDIRNAME
+MODID=$(grep_prop id $TMPDIR/module.prop)
+MODPATH=$MODULEROOT/$MODID
+
+# Create mod paths
+rm -rf $MODPATH 2>/dev/null
+mkdir -p $MODPATH
+
+##########
+# Install
+##########
+
+# Extract to module path
+unzip -o "$ZIPFILE" -x 'META-INF/*' -d $MODPATH >&2
+
+# Load customization script
+[ -f $MODPATH/customize.sh ] && . $MODPATH/customize.sh
+
+# Handle replace folders
+for TARGET in $REPLACE; do
+  ui_print "- Replace target: $TARGET"
+  mktouch $MODPATH$TARGET/.replace
+done
+
+# Auto Mount
+if ! $SKIPMOUNT; then
+  $BOOTMODE && touch $MODPATH/update
+fi
+
+# Set permissions
+if [ -f $MODPATH/customize.sh ]; then
+  # Already handled in customize.sh
+  :
+else
+  set_perm_recursive $MODPATH 0 0 0755 0644
+  [ -f $MODPATH/service.sh ] && set_perm $MODPATH/service.sh 0 0 0755
+  [ -f $MODPATH/post-fs-data.sh ] && set_perm $MODPATH/post-fs-data.sh 0 0 0755
+fi
+
+# Handle sensitive props
+if $BOOTMODE; then
+  # Update info for Magisk Manager
+  mktouch $NVBASE/modules/$MODID/update
+  rm -rf $NVBASE/modules/$MODID/remove 2>/dev/null
+  rm -rf $NVBASE/modules/$MODID/disable 2>/dev/null
+fi
+
+# Copy over custom sepolicy rules
+[ -f $MODPATH/sepolicy.rule ] && {
+  ui_print "- Installing custom sepolicy patch"
+  copy_sepolicy_rules
+}
+
+##############
+# Finalizing
+##############
+
+cd /
+$BOOTMODE || recovery_cleanup
+rm -rf $TMPDIR
+
+ui_print "- Done"
+exit 0

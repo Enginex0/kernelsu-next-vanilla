@@ -1,6 +1,34 @@
 # KernelSU-Next + SUSFS GKI Builder
 
-Build GKI kernels with KernelSU-Next root and SUSFS hiding support.
+Build GKI kernels with KernelSU-Next root and comprehensive SUSFS hiding support.
+
+## Features
+
+| Feature | Description |
+|---------|-------------|
+| **KernelSU-Next** | Root access with SUSFS integration |
+| **SUSFS (12 features)** | Complete root hiding from detection apps |
+| **NoMount VFS** | Kernel-level file path redirection |
+| **kstat_redirect** | Proper stat() spoofing via redirect API |
+| **Unicode Filter** | Block paths with suspicious unicode |
+| **SUS_PROC_NET_UNIX** | Hide Zygisk sockets from /proc/net/unix |
+
+### SUSFS Features Enabled
+
+```
+CONFIG_KSU_SUSFS=y
+CONFIG_KSU_SUSFS_SUS_PATH=y
+CONFIG_KSU_SUSFS_SUS_MOUNT=y
+CONFIG_KSU_SUSFS_SUS_KSTAT=y
+CONFIG_KSU_SUSFS_SUS_MAP=y
+CONFIG_KSU_SUSFS_SUS_PROC_NET_UNIX=y
+CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+CONFIG_KSU_SUSFS_ENABLE_LOG=y
+CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+CONFIG_KSU_SUSFS_UNICODE_FILTER=y
+```
 
 ## Quick Start
 
@@ -12,45 +40,56 @@ Build GKI kernels with KernelSU-Next root and SUSFS hiding support.
 4. Select your kernel version and device
 5. Download the AnyKernel3 zip when complete
 
-### Manual Build (One-liner summary)
+### Manual Build
 
 ```bash
 # 1. Sync GKI kernel
 repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10-2024-05 --depth=1
 repo sync -c -j$(nproc)
 
-# 2. Add KernelSU-Next (dev_susfs branch for SUSFS support)
+# 2. Add KernelSU-Next (dev_susfs branch)
 curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/dev_susfs/kernel/setup.sh" | bash -s dev_susfs
 
-# 3. Add SUSFS kernel patches
-git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10
-cp susfs4ksu/kernel_patches/fs/* common/fs/
-cp susfs4ksu/kernel_patches/include/linux/* common/include/linux/
+# 3. Add custom SUSFS kernel patches (all 12 features)
+git clone https://github.com/Enginex0/susfs4ksu.git -b gki-android12-5.10
+cp susfs4ksu/kernel_patches/fs/susfs.c common/fs/
+cp susfs4ksu/kernel_patches/include/linux/*.h common/include/linux/
 patch -p1 -d common < susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
 
-# 4. Configure
-echo -e "CONFIG_KSU=y\nCONFIG_KSU_SUSFS=y" >> common/arch/arm64/configs/gki_defconfig
+# 4. Add NoMount VFS
+git clone https://github.com/Enginex0/nomount-vfs.git
+patch -p1 -d common < nomount-vfs/patches/nomount-core-5.10.patch
+# Run inject scripts for hooks...
 
-# 5. Build
+# 5. Configure & Build
 tools/bazel build --config=fast --config=stamp --lto=thin //common:kernel_aarch64_dist
 ```
 
-## Why Two Steps for SUSFS?
+## Architecture
 
-| Component | What It Does | How to Add |
-|-----------|--------------|------------|
-| **KernelSU-Next** | Root access | `setup.sh` script |
-| **SUSFS** | Hide root from apps | Kernel patches (separate) |
-
-KernelSU-Next's `setup.sh` only sets up KernelSU-Next. SUSFS is a **separate project** that requires kernel-level patches. The `dev_susfs` branch of KernelSU-Next has code that *uses* SUSFS APIs, but you still need to *add* SUSFS to the kernel.
-
-## Documentation
-
-See **[docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md)** for:
-- Detailed step-by-step instructions
-- Branch selection guide
-- Troubleshooting
-- FAQ
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Detection App (Momo)                      │
+│                         stat()                               │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                     SUSFS kstat_redirect                     │
+│              Spoofs device ID: fd2fh → fd05h                 │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                       NoMount VFS                            │
+│           Redirects: /system/X → /data/adb/modules/X        │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Module Files on /data                     │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ## Supported Configurations
 
@@ -64,5 +103,7 @@ See **[docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md)** for:
 ## Credits
 
 - [rifsxd/KernelSU-Next](https://github.com/rifsxd/KernelSU-Next) - KernelSU-Next
-- [simonpunk/susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) - SUSFS
+- [simonpunk/susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) - Original SUSFS
+- [Enginex0/susfs4ksu](https://github.com/Enginex0/susfs4ksu) - Custom SUSFS fork (12 features)
+- [Enginex0/nomount-vfs](https://github.com/Enginex0/nomount-vfs) - NoMount VFS hiding
 - [WildKernels](https://github.com/WildKernels) - AnyKernel3 GKI support

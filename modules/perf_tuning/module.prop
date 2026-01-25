@@ -1,0 +1,6 @@
+id=perf_tuning
+name=Performance Tuning
+version=1.2.0
+versionCode=3
+author=Enginex0
+description=SurfaceFlinger + BFQ I/O + Memory tuning for UI smoothness and responsiveness
