@@ -245,6 +245,158 @@ jobs:
 
         echo "=== Custom SUSFS patches applied ==="
 
+    - name: Add sus_proc_net_unix Feature (Hide Zygisk Sockets)
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        echo "=== Adding sus_proc_net_unix feature to hide Zygisk sockets from /proc/net/unix ==="
+        cd common
+
+        # 1. Add struct definitions to susfs.h
+        if ! grep -q "st_susfs_sus_proc_net_unix" include/linux/susfs.h; then
+          sed -i '/#endif.*CONFIG_KSU_SUSFS_SUS_MAP/a \
+\
+/* sus_proc_net_unix - hide unix socket entries from \/proc\/net\/unix */\
+#ifdef CONFIG_KSU_SUSFS_SUS_PROC_NET_UNIX\
+struct st_susfs_sus_proc_net_unix {\
+	char                                    socket_name_pattern[SUSFS_MAX_LEN_PATHNAME];\
+	int                                     err;\
+};\
+\
+struct st_susfs_sus_proc_net_unix_list {\
+	struct list_head                        list;\
+	char                                    socket_name_pattern[SUSFS_MAX_LEN_PATHNAME];\
+};\
+#endif' include/linux/susfs.h
+          echo "✓ Struct definitions added to susfs.h"
+        fi
+
+        # 2. Add function declarations to susfs.h
+        if ! grep -q "susfs_add_sus_proc_net_unix" include/linux/susfs.h; then
+          sed -i '/void susfs_add_sus_map/a \
+\
+/* sus_proc_net_unix */\
+#ifdef CONFIG_KSU_SUSFS_SUS_PROC_NET_UNIX\
+void susfs_add_sus_proc_net_unix(void __user **user_info);\
+extern bool susfs_is_sus_proc_net_unix(const char *socket_name);\
+#endif' include/linux/susfs.h
+          echo "✓ Function declarations added"
+        fi
+
+        # 3. Add CMD constant to susfs_def.h
+        if ! grep -q "CMD_SUSFS_ADD_SUS_PROC_NET_UNIX" include/linux/susfs_def.h; then
+          sed -i '/CMD_SUSFS_ADD_SUS_MAP/a #define CMD_SUSFS_ADD_SUS_PROC_NET_UNIX 0x60030' include/linux/susfs_def.h
+          echo "✓ CMD constant added"
+        fi
+
+        # 4. Add implementation to fs/susfs.c (inline, avoiding complex escaping)
+        if ! grep -q "sus_proc_net_unix" fs/susfs.c; then
+          cat >> fs/susfs.c << 'SUSFS_PROC_NET_UNIX'
+
+/* sus_proc_net_unix - HYBRID implementation (builtin + runtime patterns) */
+#ifdef CONFIG_KSU_SUSFS_SUS_PROC_NET_UNIX
+static DEFINE_SPINLOCK(susfs_spin_lock_sus_proc_net_unix);
+static LIST_HEAD(LH_SUS_PROC_NET_UNIX);
+
+static const char *sus_unix_builtin_patterns[] = {
+	"zn_zygote", "zygiskd", "magiskd", "_magisk", "zygisk_", "rezygisk", NULL
+};
+
+void susfs_add_sus_proc_net_unix(void __user **user_info) {
+	struct st_susfs_sus_proc_net_unix info = {0};
+	struct st_susfs_sus_proc_net_unix_list *cursor, *new_list;
+	bool found_dup = false;
+
+	if (copy_from_user(&info, (void __user*)*user_info, sizeof(info))) {
+		info.err = -EFAULT; goto out;
+	}
+	info.socket_name_pattern[SUSFS_MAX_LEN_PATHNAME - 1] = '\0';
+	if (strlen(info.socket_name_pattern) == 0) { info.err = -EINVAL; goto out; }
+
+	new_list = kmalloc(sizeof(*new_list), GFP_KERNEL);
+	if (!new_list) { info.err = -ENOMEM; goto out; }
+	strncpy(new_list->socket_name_pattern, info.socket_name_pattern, SUSFS_MAX_LEN_PATHNAME - 1);
+	new_list->socket_name_pattern[SUSFS_MAX_LEN_PATHNAME - 1] = '\0';
+	INIT_LIST_HEAD(&new_list->list);
+
+	spin_lock(&susfs_spin_lock_sus_proc_net_unix);
+	list_for_each_entry(cursor, &LH_SUS_PROC_NET_UNIX, list) {
+		if (!strcmp(cursor->socket_name_pattern, info.socket_name_pattern)) { found_dup = true; break; }
+	}
+	if (found_dup) { spin_unlock(&susfs_spin_lock_sus_proc_net_unix); kfree(new_list); info.err = 0; goto out; }
+	list_add_tail(&new_list->list, &LH_SUS_PROC_NET_UNIX);
+	spin_unlock(&susfs_spin_lock_sus_proc_net_unix);
+	SUSFS_LOGI("sus_proc_net_unix: pattern '%s' ADDED\n", info.socket_name_pattern);
+	info.err = 0;
+out:
+	copy_to_user(&((struct st_susfs_sus_proc_net_unix __user*)*user_info)->err, &info.err, sizeof(info.err));
+}
+
+bool susfs_is_sus_proc_net_unix(const char *socket_name) {
+	struct st_susfs_sus_proc_net_unix_list *cursor;
+	const char **p;
+	if (!socket_name || !*socket_name || unlikely(!susfs_is_current_proc_umounted())) return false;
+	for (p = sus_unix_builtin_patterns; *p; p++) {
+		if (strstr(socket_name, *p)) { SUSFS_LOGI("sus_proc_net_unix: HIDING '%s'\n", socket_name); return true; }
+	}
+	spin_lock(&susfs_spin_lock_sus_proc_net_unix);
+	list_for_each_entry(cursor, &LH_SUS_PROC_NET_UNIX, list) {
+		if (strstr(socket_name, cursor->socket_name_pattern)) {
+			spin_unlock(&susfs_spin_lock_sus_proc_net_unix);
+			SUSFS_LOGI("sus_proc_net_unix: HIDING '%s'\n", socket_name);
+			return true;
+		}
+	}
+	spin_unlock(&susfs_spin_lock_sus_proc_net_unix);
+	return false;
+}
+EXPORT_SYMBOL(susfs_is_sus_proc_net_unix);
+#endif
+SUSFS_PROC_NET_UNIX
+          echo "✓ Implementation added to fs/susfs.c"
+        fi
+
+        # 5. Add hook to net/unix/af_unix.c
+        if ! grep -q "susfs_is_sus_proc_net_unix" net/unix/af_unix.c; then
+          # Add include
+          sed -i '/#include "scm.h"/i #ifdef CONFIG_KSU_SUSFS_SUS_PROC_NET_UNIX\n#include <linux/susfs.h>\n#endif' net/unix/af_unix.c
+
+          # Add helper function before unix_seq_show
+          sed -i '/^static int unix_seq_show/i \
+#ifdef CONFIG_KSU_SUSFS_SUS_PROC_NET_UNIX\
+static bool susfs_should_hide_unix_socket(struct unix_sock *u) {\
+	char buf[108]; int i, len, clen;\
+	if (!u->addr || u->addr->hash >= UNIX_HASH_SIZE) return false;\
+	len = u->addr->len - sizeof(short); if (len <= 1) return false;\
+	clen = (len - 1 < 107) ? len - 1 : 107;\
+	for (i = 0; i < clen; i++) buf[i] = u->addr->name->sun_path[i + 1] ?: '"'"'@'"'"';\
+	buf[clen] = '"'"'\\0'"'"';\
+	return susfs_is_sus_proc_net_unix(buf);\
+}\
+#endif\n' net/unix/af_unix.c
+
+          # Add check after unix_state_lock
+          sed -i '/unix_state_lock(s);/a \
+#ifdef CONFIG_KSU_SUSFS_SUS_PROC_NET_UNIX\n\t\tif (susfs_should_hide_unix_socket(u)) { unix_state_unlock(s); return 0; }\n#endif' net/unix/af_unix.c
+          echo "✓ Hook added to net/unix/af_unix.c"
+        fi
+
+        # 6. Add command handler to supercalls.c
+        SUPERCALLS="$KERNEL_ROOT/KernelSU-Next/kernel/supercalls.c"
+        if [ -f "$SUPERCALLS" ] && ! grep -q "CMD_SUSFS_ADD_SUS_PROC_NET_UNIX" "$SUPERCALLS"; then
+          sed -i '/CMD_SUSFS_ADD_SUS_MAP/,/return 0;/ {
+            /return 0;/a \
+#ifdef CONFIG_KSU_SUSFS_SUS_PROC_NET_UNIX\
+        if (cmd == CMD_SUSFS_ADD_SUS_PROC_NET_UNIX) {\
+            susfs_add_sus_proc_net_unix(arg);\
+            return 0;\
+        }\
+#endif
+          }' "$SUPERCALLS"
+          echo "✓ Command handler added to supercalls.c"
+        fi
+
+        echo "=== sus_proc_net_unix feature added ==="
+
     - name: Integrate NoMount VFS Hiding (The Marriage!)
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
@@ -430,6 +582,7 @@ jobs:
         CONFIG_KSU_SUSFS_SUS_MOUNT=y
         CONFIG_KSU_SUSFS_SUS_KSTAT=y
         CONFIG_KSU_SUSFS_SUS_MAP=y
+        CONFIG_KSU_SUSFS_SUS_PROC_NET_UNIX=y
         CONFIG_KSU_SUSFS_SPOOF_UNAME=y
         CONFIG_KSU_SUSFS_ENABLE_LOG=y
         CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
