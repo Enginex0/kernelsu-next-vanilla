@@ -177,15 +177,9 @@ jobs:
             default y
             help
               Filter paths containing suspicious unicode characters.
-        config KSU_SUSFS_SUS_PROC_NET_UNIX
-            bool "Enable SUS_PROC_NET_UNIX"
-            depends on KSU_SUSFS
-            default y
-            help
-              Hide suspicious unix sockets from /proc/net/unix.
         KCONFIG_EOF
           sed -i 's/^        //' "$KCONFIG_FILE"
-          echo "UNICODE_FILTER and SUS_PROC_NET_UNIX Kconfig options added"
+          echo "UNICODE_FILTER Kconfig option added"
         fi
 
     - name: Apply Custom SUSFS Kernel Patches (All 11 Features)
@@ -266,14 +260,6 @@ jobs:
         fi
 
         echo "=== Custom SUSFS patches applied ==="
-
-    - name: Add sus_proc_net_unix Feature (Hide Zygisk Sockets)
-      working-directory: ${{ env.KERNEL_ROOT }}
-      run: |
-        echo "=== Adding sus_proc_net_unix feature to hide Zygisk sockets ==="
-        chmod +x "$GITHUB_WORKSPACE/scripts/inject_sus_proc_net_unix.sh"
-        "$GITHUB_WORKSPACE/scripts/inject_sus_proc_net_unix.sh" "$KERNEL_ROOT/common" "$KERNEL_ROOT/KernelSU-Next"
-        echo "=== sus_proc_net_unix feature added ==="
 
     - name: Integrate NoMount VFS Hiding (The Marriage!)
       working-directory: ${{ env.KERNEL_ROOT }}
@@ -460,7 +446,6 @@ jobs:
         CONFIG_KSU_SUSFS_SUS_MOUNT=y
         CONFIG_KSU_SUSFS_SUS_KSTAT=y
         CONFIG_KSU_SUSFS_SUS_MAP=y
-        CONFIG_KSU_SUSFS_SUS_PROC_NET_UNIX=y
         CONFIG_KSU_SUSFS_SPOOF_UNAME=y
         CONFIG_KSU_SUSFS_ENABLE_LOG=y
         CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
