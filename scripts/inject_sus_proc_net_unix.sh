@@ -131,37 +131,53 @@ fi
 
 # 5. Add hook to net/unix/af_unix.c
 if ! grep -q "susfs_is_sus_proc_net_unix" net/unix/af_unix.c 2>/dev/null; then
-    # Add include at top of file
-    sed -i '1i #ifdef CONFIG_KSU_SUSFS_SUS_PROC_NET_UNIX\n#include <linux/susfs.h>\n#endif\n' net/unix/af_unix.c
-
-    # Create helper function file
-    cat > /tmp/sus_unix_helper.txt << 'HELPEREOF'
-
-#ifdef CONFIG_KSU_SUSFS_SUS_PROC_NET_UNIX
-static bool susfs_should_hide_unix_socket(struct unix_sock *u) {
-	char buf[108]; int i, len;
-	if (!u || !u->addr) return false;
-	len = u->addr->len - sizeof(short);
-	if (len <= 1 || len > 107) return false;
-	for (i = 1; i < len; i++) buf[i-1] = u->addr->name->sun_path[i] ? u->addr->name->sun_path[i] : '@';
-	buf[len-1] = 0;
-	return susfs_is_sus_proc_net_unix(buf);
-}
-#endif
-
-HELPEREOF
-
-    # Insert helper before unix_seq_show
-    LINE=$(grep -n "^static int unix_seq_show" net/unix/af_unix.c | head -1 | cut -d: -f1)
-    if [ -n "$LINE" ]; then
-        head -n $((LINE - 1)) net/unix/af_unix.c > /tmp/af_unix.c.tmp
-        cat /tmp/sus_unix_helper.txt >> /tmp/af_unix.c.tmp
-        tail -n +$LINE net/unix/af_unix.c >> /tmp/af_unix.c.tmp
-        mv /tmp/af_unix.c.tmp net/unix/af_unix.c
+    # Add include AFTER the existing includes (find last #include line before the code)
+    LAST_INCLUDE=$(grep -n "^#include" net/unix/af_unix.c | tail -1 | cut -d: -f1)
+    if [ -n "$LAST_INCLUDE" ]; then
+        sed -i "${LAST_INCLUDE}a\\
+#ifdef CONFIG_KSU_SUSFS_SUS_PROC_NET_UNIX\\
+#include <linux/susfs.h>\\
+#endif" net/unix/af_unix.c
+        echo "✓ Include added after line $LAST_INCLUDE"
     fi
 
-    # Add check inside unix_seq_show after unix_state_lock
-    sed -i '/unix_state_lock(s);/a \\t\t#ifdef CONFIG_KSU_SUSFS_SUS_PROC_NET_UNIX\n\t\tif (susfs_should_hide_unix_socket(u)) { unix_state_unlock(s); return 0; }\n\t\t#endif' net/unix/af_unix.c
+    # Find unix_seq_show function and add helper + hook
+    SEQ_SHOW_LINE=$(grep -n "^static int unix_seq_show" net/unix/af_unix.c | head -1 | cut -d: -f1)
+    if [ -n "$SEQ_SHOW_LINE" ]; then
+        # Insert helper function BEFORE unix_seq_show
+        sed -i "${SEQ_SHOW_LINE}i\\
+#ifdef CONFIG_KSU_SUSFS_SUS_PROC_NET_UNIX\\
+static bool susfs_should_hide_unix_socket(struct unix_sock *u) {\\
+	char buf[108]; int i, len;\\
+	if (!u || !u->addr) return false;\\
+	len = u->addr->len - sizeof(short);\\
+	if (len <= 1 || len > 107) return false;\\
+	for (i = 1; i < len; i++) buf[i-1] = u->addr->name->sun_path[i] ? u->addr->name->sun_path[i] : '@';\\
+	buf[len-1] = 0;\\
+	return susfs_is_sus_proc_net_unix(buf);\\
+}\\
+#endif\\
+" net/unix/af_unix.c
+        echo "✓ Helper function added before unix_seq_show"
+
+        # Find the unix_state_lock(s) INSIDE unix_seq_show (it's within ~20 lines of the function start)
+        # Use awk to only modify the one inside unix_seq_show
+        awk '
+        /^static int unix_seq_show/ { in_func=1 }
+        in_func && /unix_state_lock\(s\);/ && !done {
+            print
+            print "\t\t#ifdef CONFIG_KSU_SUSFS_SUS_PROC_NET_UNIX"
+            print "\t\tif (susfs_should_hide_unix_socket(u)) { unix_state_unlock(s); return 0; }"
+            print "\t\t#endif"
+            done=1
+            next
+        }
+        { print }
+        ' net/unix/af_unix.c > /tmp/af_unix.c.tmp && mv /tmp/af_unix.c.tmp net/unix/af_unix.c
+        echo "✓ Hook added inside unix_seq_show"
+    else
+        echo "⚠ Could not find unix_seq_show function"
+    fi
     echo "✓ Hook added to net/unix/af_unix.c"
 fi
 
