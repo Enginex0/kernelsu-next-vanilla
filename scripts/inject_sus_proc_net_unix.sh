@@ -20,7 +20,7 @@ if ! grep -q "CMD_SUSFS_ADD_SUS_PROC_NET_UNIX" include/linux/susfs_def.h 2>/dev/
     echo "✓ CMD constant added to susfs_def.h"
 fi
 
-# 2. Add struct definitions to susfs.h
+# 2. Add struct definitions to susfs.h (insert after st_susfs_sus_map struct block)
 if ! grep -q "st_susfs_sus_proc_net_unix" include/linux/susfs.h 2>/dev/null; then
     cat > /tmp/sus_unix_struct.txt << 'STRUCTEOF'
 
@@ -37,14 +37,23 @@ struct st_susfs_sus_proc_net_unix_list {
 };
 #endif
 STRUCTEOF
-    # Find line with #endif for SUS_MAP and insert after
-    LINE=$(grep -n "#endif.*CONFIG_KSU_SUSFS_SUS_MAP" include/linux/susfs.h | tail -1 | cut -d: -f1)
+    # Find line AFTER the #endif that closes st_susfs_sus_map (look for pattern: struct st_susfs_sus_map ... #endif)
+    LINE=$(grep -n "st_susfs_sus_map" include/linux/susfs.h | head -1 | cut -d: -f1)
     if [ -n "$LINE" ]; then
-        head -n "$LINE" include/linux/susfs.h > /tmp/susfs.h.tmp
-        cat /tmp/sus_unix_struct.txt >> /tmp/susfs.h.tmp
-        tail -n +$((LINE + 1)) include/linux/susfs.h >> /tmp/susfs.h.tmp
-        mv /tmp/susfs.h.tmp include/linux/susfs.h
-        echo "✓ Struct definitions added to susfs.h"
+        # Find the next #endif after st_susfs_sus_map
+        ENDIF_LINE=$(tail -n +$LINE include/linux/susfs.h | grep -n "^#endif" | head -1 | cut -d: -f1)
+        if [ -n "$ENDIF_LINE" ]; then
+            INSERT_LINE=$((LINE + ENDIF_LINE - 1))
+            head -n "$INSERT_LINE" include/linux/susfs.h > /tmp/susfs.h.tmp
+            cat /tmp/sus_unix_struct.txt >> /tmp/susfs.h.tmp
+            tail -n +$((INSERT_LINE + 1)) include/linux/susfs.h >> /tmp/susfs.h.tmp
+            mv /tmp/susfs.h.tmp include/linux/susfs.h
+            echo "✓ Struct definitions added to susfs.h (after line $INSERT_LINE)"
+        else
+            echo "⚠ Could not find #endif after st_susfs_sus_map"
+        fi
+    else
+        echo "⚠ Could not find st_susfs_sus_map in susfs.h"
     fi
 fi
 
