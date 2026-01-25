@@ -7,11 +7,10 @@ Build GKI kernels with KernelSU-Next root and comprehensive SUSFS hiding support
 | Feature | Description |
 |---------|-------------|
 | **KernelSU-Next** | Root access with SUSFS integration |
-| **SUSFS (12 features)** | Complete root hiding from detection apps |
+| **SUSFS (11 features)** | Complete root hiding from detection apps |
 | **NoMount VFS** | Kernel-level file path redirection |
 | **kstat_redirect** | Proper stat() spoofing via redirect API |
 | **Unicode Filter** | Block paths with suspicious unicode |
-| **SUS_PROC_NET_UNIX** | Hide Zygisk sockets from /proc/net/unix |
 
 ### SUSFS Features Enabled
 
@@ -21,7 +20,6 @@ CONFIG_KSU_SUSFS_SUS_PATH=y
 CONFIG_KSU_SUSFS_SUS_MOUNT=y
 CONFIG_KSU_SUSFS_SUS_KSTAT=y
 CONFIG_KSU_SUSFS_SUS_MAP=y
-CONFIG_KSU_SUSFS_SUS_PROC_NET_UNIX=y
 CONFIG_KSU_SUSFS_SPOOF_UNAME=y
 CONFIG_KSU_SUSFS_ENABLE_LOG=y
 CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
@@ -50,7 +48,7 @@ repo sync -c -j$(nproc)
 # 2. Add KernelSU-Next (dev_susfs branch)
 curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/dev_susfs/kernel/setup.sh" | bash -s dev_susfs
 
-# 3. Add custom SUSFS kernel patches (all 12 features)
+# 3. Add custom SUSFS kernel patches (all 11 features)
 git clone https://github.com/Enginex0/susfs4ksu.git -b gki-android12-5.10
 cp susfs4ksu/kernel_patches/fs/susfs.c common/fs/
 cp susfs4ksu/kernel_patches/include/linux/*.h common/include/linux/
@@ -104,6 +102,6 @@ tools/bazel build --config=fast --config=stamp --lto=thin //common:kernel_aarch6
 
 - [rifsxd/KernelSU-Next](https://github.com/rifsxd/KernelSU-Next) - KernelSU-Next
 - [simonpunk/susfs4ksu](https://gitlab.com/simonpunk/susfs4ksu) - Original SUSFS
-- [Enginex0/susfs4ksu](https://github.com/Enginex0/susfs4ksu) - Custom SUSFS fork (12 features)
+- [Enginex0/susfs4ksu](https://github.com/Enginex0/susfs4ksu) - Custom SUSFS fork (11 features)
 - [Enginex0/nomount-vfs](https://github.com/Enginex0/nomount-vfs) - NoMount VFS hiding
 - [WildKernels](https://github.com/WildKernels) - AnyKernel3 GKI support

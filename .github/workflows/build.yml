@@ -222,35 +222,8 @@ jobs:
           echo "ERROR: SUSFS patch not found: $SUSFS_PATCH" && exit 1
         fi
 
-        # Apply unicode filter hooks using sed injection (more reliable than patch)
-        echo "=== Injecting Unicode filter hooks ==="
-        cat > /tmp/inject_unicode.sh << 'UNICODE_SCRIPT'
-        #!/bin/bash
-        cd "$1"
-        # fs/open.c - add include
-        if ! grep -q "CONFIG_KSU_SUSFS_UNICODE_FILTER" fs/open.c; then
-          sed -i '/#include "internal.h"/a #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\n#include <linux\/susfs.h>\n#endif' fs/open.c
-        fi
-        # fs/open.c - add check in do_faccessat
-        if ! grep -q "susfs_check_unicode_bypass" fs/open.c; then
-          sed -i '/^static int do_faccessat/,/^{/ { /^{/a #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\n\tif (susfs_check_unicode_bypass(filename)) { return -ENOENT; }\n#endif
-          }' fs/open.c
-          sed -i '/^static long do_sys_openat2/,/struct filename \*tmp;/ { /struct filename \*tmp;/a #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\n\tif (susfs_check_unicode_bypass(filename)) { return -ENOENT; }\n#endif
-          }' fs/open.c
-        fi
-        # fs/stat.c - add include
-        if ! grep -q "CONFIG_KSU_SUSFS_UNICODE_FILTER" fs/stat.c; then
-          sed -i '/#include "internal.h"/i #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\n#include <linux\/susfs.h>\n#endif' fs/stat.c
-        fi
-        # fs/stat.c - add check in vfs_fstatat
-        if ! grep -q "susfs_check_unicode_bypass" fs/stat.c; then
-          sed -i '/^int vfs_fstatat/,/^{/ { /^{/a #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\n\tif (filename \&\& susfs_check_unicode_bypass(filename)) { return -ENOENT; }\n#endif
-          }' fs/stat.c
-        fi
-        UNICODE_SCRIPT
-        chmod +x /tmp/inject_unicode.sh
-        bash /tmp/inject_unicode.sh "$KERNEL_ROOT/common"
-        echo "=== Unicode filter hooks injected ==="
+        # Unicode filter hooks are now included in the SUSFS patch (commit 0e3cdb6)
+        # No separate injection needed
 
         # Fix for android12 5.10 <= 209
         if [[ "${{ inputs.android_version }}" == "android12" && "${{ inputs.kernel_version }}" == "5.10" ]]; then
