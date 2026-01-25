@@ -114,7 +114,9 @@ out:
 bool susfs_is_sus_proc_net_unix(const char *name) {
 	struct st_susfs_sus_proc_net_unix_list *cursor;
 	const char **p;
-	if (!name || !*name || unlikely(!susfs_is_current_proc_umounted())) return false;
+	kuid_t uid = current_uid();
+	if (!name || !*name) return false;
+	if (uid.val < 10000) return false;  /* Don't hide from root/system - they can see everything */
 	for (p = sus_unix_builtin; *p; p++) if (strstr(name, *p)) return true;
 	spin_lock(&susfs_spin_lock_sus_proc_net_unix);
 	list_for_each_entry(cursor, &LH_SUS_PROC_NET_UNIX, list) {
