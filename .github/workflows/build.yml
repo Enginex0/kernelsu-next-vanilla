@@ -166,21 +166,23 @@ jobs:
           fi
         fi
 
+        # === TEMPORARILY DISABLED: Unicode filter causing detections ===
         # Add missing Kconfig options not in KernelSU-Next upstream
-        KCONFIG_FILE="$KERNEL_ROOT/KernelSU-Next/kernel/Kconfig"
-        if [ -f "$KCONFIG_FILE" ] && ! grep -q "KSU_SUSFS_UNICODE_FILTER" "$KCONFIG_FILE"; then
-          echo "Adding missing SUSFS Kconfig options..."
-          cat >> "$KCONFIG_FILE" << 'KCONFIG_EOF'
-        config KSU_SUSFS_UNICODE_FILTER
-            bool "Enable UNICODE_FILTER"
-            depends on KSU_SUSFS
-            default y
-            help
-              Filter paths containing suspicious unicode characters.
-        KCONFIG_EOF
-          sed -i 's/^        //' "$KCONFIG_FILE"
-          echo "UNICODE_FILTER Kconfig option added"
-        fi
+        # KCONFIG_FILE="$KERNEL_ROOT/KernelSU-Next/kernel/Kconfig"
+        # if [ -f "$KCONFIG_FILE" ] && ! grep -q "KSU_SUSFS_UNICODE_FILTER" "$KCONFIG_FILE"; then
+        #   echo "Adding missing SUSFS Kconfig options..."
+        #   cat >> "$KCONFIG_FILE" << 'KCONFIG_EOF'
+        # config KSU_SUSFS_UNICODE_FILTER
+        #     bool "Enable UNICODE_FILTER"
+        #     depends on KSU_SUSFS
+        #     default y
+        #     help
+        #       Filter paths containing suspicious unicode characters.
+        # KCONFIG_EOF
+        #   sed -i 's/^        //' "$KCONFIG_FILE"
+        #   echo "UNICODE_FILTER Kconfig option added"
+        # fi
+        # === END DISABLED SECTION ===
 
     - name: Apply Custom SUSFS Kernel Patches (All 11 Features)
       working-directory: ${{ env.KERNEL_ROOT }}
@@ -222,35 +224,37 @@ jobs:
           echo "ERROR: SUSFS patch not found: $SUSFS_PATCH" && exit 1
         fi
 
+        # === TEMPORARILY DISABLED: Unicode filter causing detections ===
         # Apply unicode filter hooks using sed injection (more reliable than patch)
-        echo "=== Injecting Unicode filter hooks ==="
-        cat > /tmp/inject_unicode.sh << 'UNICODE_SCRIPT'
-        #!/bin/bash
-        cd "$1"
-        # fs/open.c - add include
-        if ! grep -q "CONFIG_KSU_SUSFS_UNICODE_FILTER" fs/open.c; then
-          sed -i '/#include "internal.h"/a #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\n#include <linux\/susfs.h>\n#endif' fs/open.c
-        fi
-        # fs/open.c - add check in do_faccessat
-        if ! grep -q "susfs_check_unicode_bypass" fs/open.c; then
-          sed -i '/^static int do_faccessat/,/^{/ { /^{/a #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\n\tif (susfs_check_unicode_bypass(filename)) { return -ENOENT; }\n#endif
-          }' fs/open.c
-          sed -i '/^static long do_sys_openat2/,/struct filename \*tmp;/ { /struct filename \*tmp;/a #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\n\tif (susfs_check_unicode_bypass(filename)) { return -ENOENT; }\n#endif
-          }' fs/open.c
-        fi
-        # fs/stat.c - add include
-        if ! grep -q "CONFIG_KSU_SUSFS_UNICODE_FILTER" fs/stat.c; then
-          sed -i '/#include "internal.h"/i #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\n#include <linux\/susfs.h>\n#endif' fs/stat.c
-        fi
-        # fs/stat.c - add check in vfs_fstatat
-        if ! grep -q "susfs_check_unicode_bypass" fs/stat.c; then
-          sed -i '/^int vfs_fstatat/,/^{/ { /^{/a #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\n\tif (filename \&\& susfs_check_unicode_bypass(filename)) { return -ENOENT; }\n#endif
-          }' fs/stat.c
-        fi
-        UNICODE_SCRIPT
-        chmod +x /tmp/inject_unicode.sh
-        bash /tmp/inject_unicode.sh "$KERNEL_ROOT/common"
-        echo "=== Unicode filter hooks injected ==="
+        # echo "=== Injecting Unicode filter hooks ==="
+        # cat > /tmp/inject_unicode.sh << 'UNICODE_SCRIPT'
+        # #!/bin/bash
+        # cd "$1"
+        # # fs/open.c - add include
+        # if ! grep -q "CONFIG_KSU_SUSFS_UNICODE_FILTER" fs/open.c; then
+        #   sed -i '/#include "internal.h"/a #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\n#include <linux\/susfs.h>\n#endif' fs/open.c
+        # fi
+        # # fs/open.c - add check in do_faccessat
+        # if ! grep -q "susfs_check_unicode_bypass" fs/open.c; then
+        #   sed -i '/^static int do_faccessat/,/^{/ { /^{/a #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\n\tif (susfs_check_unicode_bypass(filename)) { return -ENOENT; }\n#endif
+        #   }' fs/open.c
+        #   sed -i '/^static long do_sys_openat2/,/struct filename \*tmp;/ { /struct filename \*tmp;/a #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\n\tif (susfs_check_unicode_bypass(filename)) { return -ENOENT; }\n#endif
+        #   }' fs/open.c
+        # fi
+        # # fs/stat.c - add include
+        # if ! grep -q "CONFIG_KSU_SUSFS_UNICODE_FILTER" fs/stat.c; then
+        #   sed -i '/#include "internal.h"/i #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\n#include <linux\/susfs.h>\n#endif' fs/stat.c
+        # fi
+        # # fs/stat.c - add check in vfs_fstatat
+        # if ! grep -q "susfs_check_unicode_bypass" fs/stat.c; then
+        #   sed -i '/^int vfs_fstatat/,/^{/ { /^{/a #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\n\tif (filename \&\& susfs_check_unicode_bypass(filename)) { return -ENOENT; }\n#endif
+        #   }' fs/stat.c
+        # fi
+        # UNICODE_SCRIPT
+        # chmod +x /tmp/inject_unicode.sh
+        # bash /tmp/inject_unicode.sh "$KERNEL_ROOT/common"
+        # echo "=== Unicode filter hooks injected ==="
+        # === END DISABLED SECTION ===
 
         # Fix for android12 5.10 <= 209
         if [[ "${{ inputs.android_version }}" == "android12" && "${{ inputs.kernel_version }}" == "5.10" ]]; then
@@ -261,132 +265,48 @@ jobs:
 
         echo "=== Custom SUSFS patches applied ==="
 
-    - name: Integrate NoMount VFS Hiding (The Marriage!)
+    - name: Integrate ZeroMount VFS Path Redirection
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
-        echo "=== Integrating NoMount (SUSFS's Spouse!) ==="
+        echo "=== Integrating ZeroMount (SUSFS's Spouse!) ==="
 
-        git clone --depth 1 https://github.com/Enginex0/nomount-vfs.git "$GITHUB_WORKSPACE/nomount-vfs"
-        NOMOUNT_VFS="$GITHUB_WORKSPACE/nomount-vfs"
+        git clone --depth 1 https://github.com/Enginex0/zeromount.git "$GITHUB_WORKSPACE/zeromount"
+        ZEROMOUNT_DIR="$GITHUB_WORKSPACE/zeromount/patches"
 
         cd common
 
-        # Select CORE patch (infrastructure only)
-        if [[ "${{ inputs.kernel_version }}" == "6.6" || "${{ inputs.kernel_version }}" == "6.1" || "${{ inputs.kernel_version }}" == "5.15" ]]; then
-          NOMOUNT_PATCH="$NOMOUNT_VFS/patches/nomount-core-5.15-6.6.patch"
-        else
-          NOMOUNT_PATCH="$NOMOUNT_VFS/patches/nomount-core-5.10.patch"
-        fi
+        echo "=== Applying ZeroMount core patch ==="
+        patch -p1 < "$ZEROMOUNT_DIR/zeromount-core.patch"
 
-        echo "Applying NoMount CORE patch: $NOMOUNT_PATCH"
-        patch -p1 < "$NOMOUNT_PATCH"
-
-        # Verify core files created
-        if [[ -f "fs/vfs_dcache.c" && -f "include/linux/vfs_dcache.h" ]]; then
-          echo "SUCCESS: NoMount core files created"
+        if [[ -f "fs/zeromount.c" && -f "include/linux/zeromount.h" ]]; then
+          echo "SUCCESS: ZeroMount core files created"
         else
-          echo "ERROR: NoMount core files missing!"
+          echo "ERROR: ZeroMount core files missing!"
           exit 1
         fi
 
-        # Run inject scripts to add hooks dynamically
-        echo "=== Running NoMount inject scripts ==="
-        chmod +x "$NOMOUNT_VFS/patches/inject-"*.sh
+        echo "=== Running ZeroMount injection scripts ==="
+        chmod +x "$ZEROMOUNT_DIR/inject-zeromount-"*.sh
 
-        "$NOMOUNT_VFS/patches/inject-stat-hooks.sh" fs/stat.c
-        "$NOMOUNT_VFS/patches/inject-statfs-hooks.sh" fs/statfs.c
-        "$NOMOUNT_VFS/patches/inject-xattr-hooks.sh" fs/xattr.c
-        "$NOMOUNT_VFS/patches/inject-namei-hooks.sh" fs/namei.c
-        "$NOMOUNT_VFS/patches/inject-maps-hooks.sh" fs/proc/task_mmu.c
-        "$NOMOUNT_VFS/patches/inject-procmounts-hooks.sh" fs/proc_namespace.c
-        "$NOMOUNT_VFS/patches/inject-readdir-hooks.sh" fs/readdir.c
+        "$ZEROMOUNT_DIR/inject-zeromount-namei.sh" fs/namei.c
+        "$ZEROMOUNT_DIR/inject-zeromount-readdir.sh" fs/readdir.c
+        "$ZEROMOUNT_DIR/inject-zeromount-dpath.sh" fs/d_path.c
+        "$ZEROMOUNT_DIR/inject-zeromount-statfs.sh" fs/statfs.c
+        "$ZEROMOUNT_DIR/inject-zeromount-xattr.sh" fs/xattr.c
 
-        echo "=== All NoMount hooks injected ==="
+        echo "=== All ZeroMount hooks injected ==="
 
-        # Enable NoMount in defconfig (Kconfig entry is in nomount-core patch)
-        echo "CONFIG_FS_DCACHE_PREFETCH=y" >> arch/arm64/configs/gki_defconfig
+        echo "CONFIG_ZEROMOUNT=y" >> arch/arm64/configs/gki_defconfig
 
-        # Validate hooks
-        echo "=== Validating NoMount hooks ==="
-        grep -q "nomount_syscall_spoof_stat" fs/stat.c || { echo "FAIL: stat.c hook missing"; exit 1; }
-        grep -q "nomount_spoof_statfs" fs/statfs.c || { echo "FAIL: statfs.c hook missing"; exit 1; }
-        grep -q "vfs_dcache_should_hide_map" fs/proc/task_mmu.c || { echo "FAIL: task_mmu.c hook missing"; exit 1; }
-        grep -q "vfs_dcache_is_mount_hidden" fs/proc_namespace.c || { echo "FAIL: proc_namespace.c hook missing"; exit 1; }
-        echo "SUCCESS: All hooks validated"
+        echo "=== Validating ZeroMount hooks ==="
+        grep -q "zeromount_getname_hook" fs/namei.c || { echo "FAIL: namei.c hook missing"; exit 1; }
+        grep -q "zeromount_inject_dents64" fs/readdir.c || { echo "FAIL: readdir.c hook missing"; exit 1; }
+        grep -q "zeromount_get_virtual_path_for_inode" fs/d_path.c || { echo "FAIL: d_path.c hook missing"; exit 1; }
+        grep -q "zeromount_spoof_statfs" fs/statfs.c || { echo "FAIL: statfs.c hook missing"; exit 1; }
+        grep -q "zeromount_spoof_xattr" fs/xattr.c || { echo "FAIL: xattr.c hook missing"; exit 1; }
+        echo "SUCCESS: All ZeroMount hooks validated"
 
-        echo "=== NoMount integration complete ==="
-        echo "🎉 SUSFS + NoMount Wedding Complete! 🎉"
-
-        # Apply NoMount comprehensive bug fixes (surgical patches)
-        # IMPORTANT: fix-null-isb.patch must be applied LAST due to line conflicts
-        echo "=== Applying NoMount Comprehensive Bug Fixes ==="
-
-        # Patch 1: Complete Memory Safety (3 P0 bugs)
-        echo "→ Applying memory safety fixes..."
-        PATCH_FILE="$NOMOUNT_VFS/patches/nomount-complete-memory-safety.patch"
-        if [ -f "$PATCH_FILE" ]; then
-          patch -p1 -F3 < "$PATCH_FILE"
-          NULL_CHECKS=$(grep -c '!inode->i_sb\|!vpath.mnt\|!path.dentry->d_sb' fs/vfs_dcache.c || true)
-          echo "  ✓ Memory safety: $NULL_CHECKS NULL checks applied (expected >= 6)"
-        else
-          echo "  ✗ ERROR: Memory safety patch not found"
-          exit 1
-        fi
-
-        # Patch 2: Concurrency Barriers (2 P1 bugs - ARM64 memory ordering)
-        echo "→ Applying concurrency memory barriers..."
-        PATCH_FILE="$NOMOUNT_VFS/patches/nomount-concurrency-barriers.patch"
-        if [ -f "$PATCH_FILE" ]; then
-          patch -p1 -F3 < "$PATCH_FILE"
-          if grep -q 'smp_wmb()' fs/vfs_dcache.c && grep -q 'READ_ONCE.*real_ino' fs/vfs_dcache.c; then
-            echo "  ✓ Concurrency: Memory barriers added for ARM64 correctness"
-          else
-            echo "  ⚠ WARNING: Memory barriers may not be fully applied"
-          fi
-        else
-          echo "  ✗ ERROR: Concurrency patch not found"
-          exit 1
-        fi
-
-        # Patch 3: Performance Hotpath Fix (removes pr_info from hot paths)
-        echo "→ Applying performance hotpath fixes..."
-        PATCH_FILE="$NOMOUNT_VFS/patches/nomount-performance-hotpath-fix.patch"
-        if [ -f "$PATCH_FILE" ]; then
-          patch -p1 -F3 < "$PATCH_FILE"
-          HOTPATH_PRINFO=$(grep -c 'pr_info.*IS_INJECTED\|pr_info.*SPOOF_STAT.*ENTER' fs/vfs_dcache.c || true)
-          if [ "$HOTPATH_PRINFO" -eq 0 ]; then
-            echo "  ✓ Performance: Hot path pr_info() calls removed"
-          else
-            echo "  ⚠ WARNING: $HOTPATH_PRINFO pr_info() calls remain in hot paths"
-          fi
-        else
-          echo "  ✗ ERROR: Performance patch not found"
-          exit 1
-        fi
-
-        # Patch 4: Logic API Fix (__putname for __getname allocations)
-        echo "→ Applying logic API fixes..."
-        PATCH_FILE="$NOMOUNT_VFS/patches/nomount-logic-api-fix.patch"
-        if [ -f "$PATCH_FILE" ]; then
-          patch -p1 -F3 < "$PATCH_FILE"
-          if grep -q '__putname' fs/vfs_dcache.c; then
-            echo "  ✓ Logic: __putname API fix applied"
-          else
-            echo "  ⚠ WARNING: __putname fix may not be fully applied"
-          fi
-        else
-          echo "  ✗ ERROR: Logic fix patch not found"
-          exit 1
-        fi
-
-        # Patch 5: CRITICAL - Null i_sb checks (simple sed - just add the check to existing conditions)
-        echo "→ Applying critical NULL i_sb fix..."
-        sed -i 's/if (!inode || NOMOUNT_DISABLED())/if (!inode || !inode->i_sb || NOMOUNT_DISABLED())/g' fs/vfs_dcache.c
-        ISB_CHECKS=$(grep -c '!inode->i_sb' fs/vfs_dcache.c || echo "0")
-        echo "  ✓ NULL i_sb: $ISB_CHECKS checks added for socket/pipe safety"
-
-        echo "✅ NoMount Comprehensive Bug Fixes Complete"
-        echo "   Fixed: 8 P0/P1 bugs (4 memory, 2 concurrency, 1 performance, 1 logic)"
+        echo "=== ZeroMount integration complete ==="
 
     - name: Upgrade LZ4 to v1.10.0 with ARM64 NEON
       working-directory: ${{ env.KERNEL_ROOT }}/common
@@ -451,7 +371,9 @@ jobs:
         CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
         CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
-        CONFIG_KSU_SUSFS_UNICODE_FILTER=y
+        # === TEMPORARILY DISABLED: Unicode filter causing detections ===
+        # CONFIG_KSU_SUSFS_UNICODE_FILTER=y
+        # === END DISABLED SECTION ===
         CONFIG_TMPFS_XATTR=y
         CONFIG_TMPFS_POSIX_ACL=y
         CONFIG_ZSMALLOC=y
@@ -903,12 +825,13 @@ jobs:
 
     - name: Build Summary
       run: |
-        echo "## KernelSU-Next + SUSFS Build" >> $GITHUB_STEP_SUMMARY
+        echo "## KernelSU-Next + SUSFS + ZeroMount Build" >> $GITHUB_STEP_SUMMARY
         echo "| Config | Value |" >> $GITHUB_STEP_SUMMARY
         echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
         echo "| Kernel | ${{ inputs.kernel_version }}.${{ env.ACTUAL_SUBLEVEL }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Android | ${{ inputs.android_version }} |" >> $GITHUB_STEP_SUMMARY
         echo "| KSU | KernelSU-Next (next branch) |" >> $GITHUB_STEP_SUMMARY
         echo "| SUSFS | Enginex0/susfs4ksu (all 11 features) |" >> $GITHUB_STEP_SUMMARY
+        echo "| ZeroMount | VFS path redirection (v1) |" >> $GITHUB_STEP_SUMMARY
         echo "| ZRAM | LZ4K/LZ4KD 8GB |" >> $GITHUB_STEP_SUMMARY
         echo "| Device Profile | ${{ inputs.device_codename }} |" >> $GITHUB_STEP_SUMMARY
