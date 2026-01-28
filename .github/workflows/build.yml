@@ -149,7 +149,7 @@ jobs:
         SUPERCALLS_FILE="$KERNEL_ROOT/KernelSU-Next/kernel/supercalls.c"
         if [ -f "$SUPERCALLS_FILE" ]; then
           # Only change the CMD constant, NOT the function name
-          sed -i 's/CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS/CMD_SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS/g' "$SUPERCALLS_FILE"
+          # DISABLED: sed -i 's/CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS/CMD_SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS/g' "$SUPERCALLS_FILE"
           echo "CMD constant alignment applied to supercalls.c"
         else
           echo "WARNING: supercalls.c not found at $SUPERCALLS_FILE"
