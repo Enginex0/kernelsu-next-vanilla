@@ -365,6 +365,66 @@ jobs:
 
         echo "=== ZeroMount integration complete ==="
 
+    - name: Fix ZeroMount SUSFS detection bypass
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        echo "=== Adding SUSFS umounted checks to ZeroMount ==="
+        ZEROMOUNT_DIR="$GITHUB_WORKSPACE/zeromount/patches"
+
+        if [[ -f "$ZEROMOUNT_DIR/fix-zeromount-susfs-bypass.sh" ]]; then
+          chmod +x "$ZEROMOUNT_DIR/fix-zeromount-susfs-bypass.sh"
+          "$ZEROMOUNT_DIR/fix-zeromount-susfs-bypass.sh" fs/zeromount.c
+        else
+          echo "Inline patching ZeroMount for SUSFS bypass..."
+
+          # Add susfs.h include
+          if ! grep -q '#include <linux/susfs.h>' fs/zeromount.c; then
+            sed -i '/#include <linux\/zeromount.h>/a\
+#ifdef CONFIG_KSU_SUSFS\
+#include <linux/susfs.h>\
+#endif' fs/zeromount.c
+          fi
+
+          # Patch zeromount_is_uid_blocked to treat umounted as blocked
+          sed -i '/^static bool zeromount_is_uid_blocked(uid_t uid) {$/,/^}$/{
+              /if (ZEROMOUNT_DISABLED()) return false;/a\
+#ifdef CONFIG_KSU_SUSFS\
+    if (susfs_is_current_proc_umounted()) return true;\
+#endif
+          }' fs/zeromount.c
+
+          # Patch zeromount_is_traversal_allowed
+          sed -i '/^bool zeromount_is_traversal_allowed(struct inode \*inode, int mask) {$/,/^}$/{
+              /if (!inode || ZEROMOUNT_DISABLED() || zeromount_is_uid_blocked(current_uid().val)) return false;/a\
+#ifdef CONFIG_KSU_SUSFS\
+    if (susfs_is_current_proc_umounted()) return false;\
+#endif
+          }' fs/zeromount.c
+
+          # Patch zeromount_inject_dents64
+          sed -i '/^void zeromount_inject_dents64(struct file \*file/,/^}$/{
+              /if (ZEROMOUNT_DISABLED() || zeromount_is_uid_blocked(current_uid().val)) return;/a\
+#ifdef CONFIG_KSU_SUSFS\
+    if (susfs_is_current_proc_umounted()) return;\
+#endif
+          }' fs/zeromount.c
+
+          # Patch zeromount_inject_dents
+          sed -i '/^void zeromount_inject_dents(struct file \*file/,/^}$/{
+              /if (ZEROMOUNT_DISABLED() || zeromount_is_uid_blocked(current_uid().val)) return;/a\
+#ifdef CONFIG_KSU_SUSFS\
+    if (susfs_is_current_proc_umounted()) return;\
+#endif
+          }' fs/zeromount.c
+        fi
+
+        # Verify
+        COUNT=$(grep -c "susfs_is_current_proc_umounted" fs/zeromount.c || echo "0")
+        echo "SUSFS bypass checks in zeromount.c: $COUNT"
+        [[ "$COUNT" -ge 2 ]] && echo "SUCCESS: ZeroMount SUSFS bypass fix applied" || echo "WARNING: Verify manually"
+
+        echo "=== ZeroMount SUSFS fix complete ==="
+
     - name: Upgrade LZ4 to v1.10.0 with ARM64 NEON
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
