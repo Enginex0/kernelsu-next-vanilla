@@ -285,28 +285,28 @@ jobs:
           echo "[*] ksu_handle_stat already has umounted check"
         else
           echo "[+] Patching ksu_handle_stat in $SUCOMPAT"
-          # Apply fix unconditionally - the awk will only modify if pattern matches
+          # Insert check after the first "return 0;" in ksu_handle_stat (after ksu_is_allow_uid check)
           awk '
-          /^int ksu_handle_stat\(int \*dfd, struct filename/ { in_stat = 1 }
-          /^int ksu_handle_stat\(int \*dfd, const char __user/ { in_stat = 1 }
-          in_stat && /if \(likely\(memcmp\(\(\*filename\)->name, su_path/ {
-            print "#ifdef CONFIG_KSU_SUSFS"
-            print "\tif (likely(susfs_is_current_proc_umounted()) || !ksu_su_compat_enabled) {"
-            print "\t\treturn 0;"
-            print "\t}"
-            print "#endif"
-            print ""
-            in_stat = 0
+          /^int ksu_handle_stat/ { in_stat = 1; first_return_done = 0 }
+          in_stat && /return 0;/ && !first_return_done {
+            print
+            first_return_done = 1
+            getline
+            if (/^[[:space:]]*}/) {
+              print
+              getline
+              # Insert after the closing brace of the first if block
+              print ""
+              print "#ifdef CONFIG_KSU_SUSFS"
+              print "\tif (susfs_is_current_proc_umounted()) {"
+              print "\t\treturn 0;"
+              print "\t}"
+              print "#endif"
+            }
+            print
+            next
           }
-          in_stat && /char path\[sizeof\(su_path\)/ {
-            print "#ifdef CONFIG_KSU_SUSFS"
-            print "\tif (likely(susfs_is_current_proc_umounted()) || !ksu_su_compat_enabled) {"
-            print "\t\treturn 0;"
-            print "\t}"
-            print "#endif"
-            print ""
-            in_stat = 0
-          }
+          /^int [a-z]/ && !/^int ksu_handle_stat/ { in_stat = 0 }
           { print }
           ' "$SUCOMPAT" > "${SUCOMPAT}.tmp" && mv "${SUCOMPAT}.tmp" "$SUCOMPAT"
 
@@ -315,9 +315,24 @@ jobs:
           if [ "$STAT_HAS_CHECK" = "yes" ]; then
             echo "[+] sucompat stat hook fix applied successfully"
           else
-            echo "[-] Warning: Fix may not have been applied - check sucompat.c structure"
-            echo "Showing ksu_handle_stat function:"
-            awk '/^int ksu_handle_stat/{found=1; print; next} found{print} found && /^}$/{exit}' "$SUCOMPAT" | head -30
+            echo "[-] Warning: Fix may not have been applied, trying alternative method"
+            # Alternative: use sed to insert after the uid check block
+            sed -i '/^int ksu_handle_stat/,/^int [a-z]/{
+              /if (!ksu_is_allow_uid_for_current/,/^[[:space:]]*}$/{
+                /^[[:space:]]*}$/a\
+\
+#ifdef CONFIG_KSU_SUSFS\
+\tif (susfs_is_current_proc_umounted()) {\
+\t\treturn 0;\
+\t}\
+#endif
+              }
+            }' "$SUCOMPAT"
+
+            STAT_HAS_CHECK=$(awk '/^int ksu_handle_stat/{found=1} found && /susfs_is_current_proc_umounted/{print "yes"; exit} found && /^int [a-z]/{exit}' "$SUCOMPAT")
+            [ "$STAT_HAS_CHECK" = "yes" ] && echo "[+] Alternative method succeeded" || echo "[-] Both methods failed"
+            echo "Final ksu_handle_stat:"
+            awk '/^int ksu_handle_stat/{found=1; print; next} found{print} found && /^}$/{exit}' "$SUCOMPAT" | head -35
           fi
         fi
         echo "=== sucompat stat hook fix complete ==="
