@@ -316,18 +316,24 @@ jobs:
             echo "[+] sucompat stat hook fix applied successfully"
           else
             echo "[-] Warning: Fix may not have been applied, trying alternative method"
-            # Alternative: use sed to insert after the uid check block
-            sed -i '/^int ksu_handle_stat/,/^int [a-z]/{
-              /if (!ksu_is_allow_uid_for_current/,/^[[:space:]]*}$/{
-                /^[[:space:]]*}$/a\
-\
-#ifdef CONFIG_KSU_SUSFS\
-\tif (susfs_is_current_proc_umounted()) {\
-\t\treturn 0;\
-\t}\
-#endif
-              }
-            }' "$SUCOMPAT"
+            # Alternative: insert after ksu_is_allow_uid check using awk
+            awk '
+            /^int ksu_handle_stat/ { in_stat = 1 }
+            in_stat && /if \(!ksu_is_allow_uid_for_current/ { in_uid_check = 1 }
+            in_stat && in_uid_check && /^[[:space:]]*\}$/ {
+              print
+              print ""
+              print "#ifdef CONFIG_KSU_SUSFS"
+              print "\tif (susfs_is_current_proc_umounted()) {"
+              print "\t\treturn 0;"
+              print "\t}"
+              print "#endif"
+              in_uid_check = 0
+              next
+            }
+            /^int [a-z]/ && !/^int ksu_handle_stat/ { in_stat = 0 }
+            { print }
+            ' "$SUCOMPAT" > "${SUCOMPAT}.tmp2" && mv "${SUCOMPAT}.tmp2" "$SUCOMPAT"
 
             STAT_HAS_CHECK=$(awk '/^int ksu_handle_stat/{found=1} found && /susfs_is_current_proc_umounted/{print "yes"; exit} found && /^int [a-z]/{exit}' "$SUCOMPAT")
             [ "$STAT_HAS_CHECK" = "yes" ] && echo "[+] Alternative method succeeded" || echo "[-] Both methods failed"
