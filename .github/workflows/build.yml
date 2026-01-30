@@ -40,6 +40,43 @@ jobs:
     - name: Checkout Repository
       uses: actions/checkout@v4
 
+    - name: Resolve Build Parameters from Device Profile
+      run: |
+        DEVICE="${{ inputs.device_codename }}"
+        PROFILE="device-profiles.json"
+
+        # Start with input values as defaults
+        ANDROID_VERSION="${{ inputs.android_version }}"
+        KERNEL_VERSION="${{ inputs.kernel_version }}"
+        SUB_LEVEL="${{ inputs.sub_level }}"
+        OS_PATCH_LEVEL="${{ inputs.os_patch_level }}"
+
+        # Override from profile if device exists
+        if [ -f "$PROFILE" ] && command -v jq &> /dev/null; then
+          if jq -e ".devices.${DEVICE}" "$PROFILE" > /dev/null 2>&1; then
+            echo "=== Auto-filling from device profile: $DEVICE ==="
+            ANDROID_VERSION=$(jq -r ".devices.${DEVICE}.android_version" "$PROFILE")
+            KERNEL_VERSION=$(jq -r ".devices.${DEVICE}.kernel_version" "$PROFILE")
+            SUB_LEVEL=$(jq -r ".devices.${DEVICE}.sub_level" "$PROFILE")
+            OS_PATCH_LEVEL=$(jq -r ".devices.${DEVICE}.os_patch_level" "$PROFILE")
+            echo "  android_version: $ANDROID_VERSION"
+            echo "  kernel_version: $KERNEL_VERSION"
+            echo "  sub_level: $SUB_LEVEL"
+            echo "  os_patch_level: $OS_PATCH_LEVEL"
+          else
+            echo "Device '$DEVICE' not in profile, using manual inputs"
+          fi
+        else
+          echo "No profile or jq not available, using manual inputs"
+        fi
+
+        # Export to environment for subsequent steps
+        echo "ANDROID_VERSION=$ANDROID_VERSION" >> $GITHUB_ENV
+        echo "KERNEL_VERSION=$KERNEL_VERSION" >> $GITHUB_ENV
+        echo "SUB_LEVEL=$SUB_LEVEL" >> $GITHUB_ENV
+        echo "OS_PATCH_LEVEL=$OS_PATCH_LEVEL" >> $GITHUB_ENV
+        echo "DEVICE_CODENAME=$DEVICE" >> $GITHUB_ENV
+
     - name: Free Disk Space
       uses: endersonmenezes/free-disk-space@v3
       with:
@@ -57,7 +94,7 @@ jobs:
 
     - name: Setup Build Environment
       run: |
-        CONFIG="${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.sub_level }}"
+        CONFIG="${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}-${{ env.SUB_LEVEL }}"
         KERNEL_ROOT="$GITHUB_WORKSPACE/$CONFIG"
         mkdir -p "$KERNEL_ROOT"
 
@@ -86,7 +123,7 @@ jobs:
     - name: Initialize and Sync Kernel Source
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
-        FORMATTED_BRANCH="${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.os_patch_level }}"
+        FORMATTED_BRANCH="${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}-${{ env.OS_PATCH_LEVEL }}"
 
         repo init -u https://android.googlesource.com/kernel/manifest -b common-${FORMATTED_BRANCH} --repo-rev=v2.16 --depth=1
 
@@ -100,30 +137,30 @@ jobs:
 
     - name: Extract Sublevel
       run: |
-        ACTUAL_SUBLEVEL="${{ inputs.sub_level }}"
+        ACTUAL_SUBLEVEL="${{ env.SUB_LEVEL }}"
         if [[ -f "$KERNEL_ROOT/common/Makefile" ]]; then
           EXTRACTED=$(grep '^SUBLEVEL = ' "$KERNEL_ROOT/common/Makefile" | awk '{print $3}')
           [[ -n "$EXTRACTED" ]] && ACTUAL_SUBLEVEL="$EXTRACTED"
         fi
 
-        ARTIFACT_BASE="${{ inputs.kernel_version }}.$ACTUAL_SUBLEVEL-${{ inputs.android_version }}-${{ inputs.os_patch_level }}-KSU-Next-SUSFS"
+        ARTIFACT_BASE="${{ env.KERNEL_VERSION }}.$ACTUAL_SUBLEVEL-${{ env.ANDROID_VERSION }}-${{ env.OS_PATCH_LEVEL }}-KSU-Next-SUSFS"
         echo "ACTUAL_SUBLEVEL=$ACTUAL_SUBLEVEL" >> $GITHUB_ENV
         echo "ARTIFACT_BASE=$ARTIFACT_BASE" >> $GITHUB_ENV
         echo "FILE_NAME=$ARTIFACT_BASE" >> $GITHUB_ENV
 
     - name: Apply glibc 2.38 Compatibility Fix
       run: |
-        if [[ "${{ inputs.android_version }}" == "android13" && "${{ inputs.kernel_version }}" == "5.10" && $ACTUAL_SUBLEVEL -le 186 ]] ||
-           [[ "${{ inputs.android_version }}" == "android13" && "${{ inputs.kernel_version }}" == "5.15" && $ACTUAL_SUBLEVEL -le 119 ]] ||
-           [[ "${{ inputs.android_version }}" == "android14" && "${{ inputs.kernel_version }}" == "5.15" && $ACTUAL_SUBLEVEL -le 110 ]] ||
-           [[ "${{ inputs.android_version }}" == "android14" && "${{ inputs.kernel_version }}" == "6.1" && $ACTUAL_SUBLEVEL -le 43 ]]; then
+        if [[ "${{ env.ANDROID_VERSION }}" == "android13" && "${{ env.KERNEL_VERSION }}" == "5.10" && $ACTUAL_SUBLEVEL -le 186 ]] ||
+           [[ "${{ env.ANDROID_VERSION }}" == "android13" && "${{ env.KERNEL_VERSION }}" == "5.15" && $ACTUAL_SUBLEVEL -le 119 ]] ||
+           [[ "${{ env.ANDROID_VERSION }}" == "android14" && "${{ env.KERNEL_VERSION }}" == "5.15" && $ACTUAL_SUBLEVEL -le 110 ]] ||
+           [[ "${{ env.ANDROID_VERSION }}" == "android14" && "${{ env.KERNEL_VERSION }}" == "6.1" && $ACTUAL_SUBLEVEL -le 43 ]]; then
           GLIBC_VERSION=$(ldd --version 2>/dev/null | head -n 1 | awk '{print $NF}')
           if [ "$(printf '%s\n' "2.38" "$GLIBC_VERSION" | sort -V | head -n1)" = "2.38" ]; then
             cd "$KERNEL_ROOT/common"
             sed -i '/\$(Q)\$(MAKE) -C \$(SUBCMD_SRC) OUTPUT=\$(abspath \$(dir \$@))\/ \$(abspath \$@)/s//$(Q)$(MAKE) -C $(SUBCMD_SRC) EXTRA_CFLAGS="$(CFLAGS)" OUTPUT=$(abspath $(dir $@))\/ $(abspath $@)/' tools/bpf/resolve_btfids/Makefile 2>/dev/null || true
-            if [[ "${{ inputs.android_version }}" == "android13" && "${{ inputs.kernel_version }}" == "5.10" && $ACTUAL_SUBLEVEL -le 186 ]] ||
-               [[ "${{ inputs.android_version }}" == "android13" && "${{ inputs.kernel_version }}" == "5.15" && $ACTUAL_SUBLEVEL -le 119 ]] ||
-               [[ "${{ inputs.android_version }}" == "android14" && "${{ inputs.kernel_version }}" == "5.15" && $ACTUAL_SUBLEVEL -le 110 ]]; then
+            if [[ "${{ env.ANDROID_VERSION }}" == "android13" && "${{ env.KERNEL_VERSION }}" == "5.10" && $ACTUAL_SUBLEVEL -le 186 ]] ||
+               [[ "${{ env.ANDROID_VERSION }}" == "android13" && "${{ env.KERNEL_VERSION }}" == "5.15" && $ACTUAL_SUBLEVEL -le 119 ]] ||
+               [[ "${{ env.ANDROID_VERSION }}" == "android14" && "${{ env.KERNEL_VERSION }}" == "5.15" && $ACTUAL_SUBLEVEL -le 110 ]]; then
               sed -i '/char \*buf = NULL;/a int i;' tools/lib/subcmd/parse-options.c 2>/dev/null || true
               sed -i 's/for (int i = 0; subcommands\[i\]; i++) {/for (i = 0; subcommands[i]; i++) {/' tools/lib/subcmd/parse-options.c 2>/dev/null || true
               sed -i '/if (subcommands) {/a int i;' tools/lib/subcmd/parse-options.c 2>/dev/null || true
@@ -188,7 +225,7 @@ jobs:
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
         echo "=== Cloning Enginex0/susfs4ksu (custom fork with all features) ==="
-        SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
+        SUSFS_BRANCH="gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
         git clone https://github.com/Enginex0/susfs4ksu.git -b "$SUSFS_BRANCH" "$SUSFS4KSU"
 
         echo "=== Injecting custom SUSFS command handler (add_sus_kstat_redirect) ==="
@@ -217,7 +254,7 @@ jobs:
         cp "$SUSFS4KSU/kernel_patches/include/linux/"*.h ./include/linux/
 
         # Apply the main SUSFS kernel integration patch
-        SUSFS_PATCH="$SUSFS4KSU/kernel_patches/50_add_susfs_in_gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}.patch"
+        SUSFS_PATCH="$SUSFS4KSU/kernel_patches/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch"
         if [ -f "$SUSFS_PATCH" ]; then
           patch -p1 --no-backup-if-mismatch < "$SUSFS_PATCH"
         else
@@ -257,7 +294,7 @@ jobs:
         # === END DISABLED SECTION ===
 
         # Fix for android12 5.10 <= 209
-        if [[ "${{ inputs.android_version }}" == "android12" && "${{ inputs.kernel_version }}" == "5.10" ]]; then
+        if [[ "${{ env.ANDROID_VERSION }}" == "android12" && "${{ env.KERNEL_VERSION }}" == "5.10" ]]; then
           if [[ "$ACTUAL_SUBLEVEL" -le 209 ]]; then
             sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
           fi
@@ -479,8 +516,8 @@ jobs:
           cp -r "$ZRAM_DIR/include/linux/"* ./include/linux/ 2>/dev/null || true
 
           # Apply LZ4 kernel integration patch
-          if [ -f "$ZRAM_DIR/${{ inputs.kernel_version }}/lz4_1.10.0.patch" ]; then
-            patch -p1 -F3 < "$ZRAM_DIR/${{ inputs.kernel_version }}/lz4_1.10.0.patch" || echo "LZ4 v1.10.0 patch skipped"
+          if [ -f "$ZRAM_DIR/${{ env.KERNEL_VERSION }}/lz4_1.10.0.patch" ]; then
+            patch -p1 -F3 < "$ZRAM_DIR/${{ env.KERNEL_VERSION }}/lz4_1.10.0.patch" || echo "LZ4 v1.10.0 patch skipped"
           fi
 
           # Verify LZ4 NEON assembly
@@ -496,7 +533,7 @@ jobs:
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
         SUKISU="$GITHUB_WORKSPACE/SukiSU_patch"
-        KERNEL_VER="${{ inputs.kernel_version }}"
+        KERNEL_VER="${{ env.KERNEL_VERSION }}"
 
         # Copy LZ4K source files
         cp -r "$SUKISU/other/zram/lz4k/include/linux/"* ./include/linux/
@@ -576,7 +613,7 @@ jobs:
         sed -i 's/CONFIG_ZSMALLOC=m/CONFIG_ZSMALLOC=y/g' "${{ env.DEFCONFIG }}"
 
         # Disable defconfig check for build
-        if [[ "${{ inputs.kernel_version }}" == "6.12" ]]; then
+        if [[ "${{ env.KERNEL_VERSION }}" == "6.12" ]]; then
           sed -i '/name = "kernel_aarch64",/a\    check_defconfig = "disabled",' common/BUILD.bazel
         else
           sed -i 's/check_defconfig//' ./common/build.config.gki
@@ -597,7 +634,7 @@ jobs:
         cp "$KERNEL_PATCHES/common/reduce_cache_pressure.patch" ./
         patch -p1 --forward < reduce_cache_pressure.patch || echo "reduce_cache_pressure skipped"
 
-        if [[ "$(printf '%s\n' "${{ inputs.kernel_version }}" "$MIN_VERSION" | sort -V | head -n1)" = "${{ inputs.kernel_version }}" ]]; then
+        if [[ "$(printf '%s\n' "${{ env.KERNEL_VERSION }}" "$MIN_VERSION" | sort -V | head -n1)" = "${{ env.KERNEL_VERSION }}" ]]; then
           cp "$KERNEL_PATCHES/common/clear_page_16bytes_align.patch" ./
           patch -p1 --forward < clear_page_16bytes_align.patch || echo "clear_page_16bytes_align skipped"
         else
@@ -617,7 +654,7 @@ jobs:
         echo "=== BBG Done ==="
 
     - name: Fix WiFi/BT on Xiaomi 6.6 GKI devices
-      if: inputs.kernel_version == '6.6'
+      if: env.KERNEL_VERSION == '6.6'
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
         echo "=== Adding Xiaomi 6.6 WiFi/BT fix ==="
@@ -633,7 +670,7 @@ jobs:
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
         echo "=== Applying Module Check Bypass ==="
-        if [[ "${{ inputs.kernel_version }}" == "6.1" || "${{ inputs.kernel_version }}" == "6.6" || "${{ inputs.kernel_version }}" == "6.12" ]]; then
+        if [[ "${{ env.KERNEL_VERSION }}" == "6.1" || "${{ env.KERNEL_VERSION }}" == "6.6" || "${{ env.KERNEL_VERSION }}" == "6.12" ]]; then
           TARGET_FILE="$KERNEL_ROOT/common/kernel/module/version.c"
         else
           TARGET_FILE="$KERNEL_ROOT/common/kernel/module.c"
@@ -649,7 +686,7 @@ jobs:
         echo "=== Module Check Bypass Done ==="
 
     - name: Add Android 16/6.12 ashmem Exports
-      if: inputs.android_version == 'android16' && inputs.kernel_version == '6.12'
+      if: env.ANDROID_VERSION == 'android16' && env.KERNEL_VERSION == '6.12'
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
         echo "=== Adding ashmem exports for Android 16 ==="
@@ -698,7 +735,7 @@ jobs:
     - name: Set Stock Build Identity
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
-        DEVICE_CODENAME="${{ inputs.device_codename }}"
+        DEVICE_CODENAME="${{ env.DEVICE_CODENAME }}"
         PROFILE_FILE="$GITHUB_WORKSPACE/device-profiles.json"
 
         if [ -f "$PROFILE_FILE" ] && command -v jq &> /dev/null; then
@@ -761,8 +798,8 @@ jobs:
 
     - name: Prepare AnyKernel3 Zip
       run: |
-        if [ -f "$KERNEL_ROOT/out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image" ]; then
-          cp "$KERNEL_ROOT/out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image" "$ANYKERNEL3/Image"
+        if [ -f "$KERNEL_ROOT/out/${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}/dist/Image" ]; then
+          cp "$KERNEL_ROOT/out/${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}/dist/Image" "$ANYKERNEL3/Image"
         elif [ -f "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image" ]; then
           cp "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image" "$ANYKERNEL3/Image"
         else
@@ -984,10 +1021,10 @@ jobs:
         echo "## KernelSU-Next + SUSFS + ZeroMount Build" >> $GITHUB_STEP_SUMMARY
         echo "| Config | Value |" >> $GITHUB_STEP_SUMMARY
         echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-        echo "| Kernel | ${{ inputs.kernel_version }}.${{ env.ACTUAL_SUBLEVEL }} |" >> $GITHUB_STEP_SUMMARY
-        echo "| Android | ${{ inputs.android_version }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Kernel | ${{ env.KERNEL_VERSION }}.${{ env.ACTUAL_SUBLEVEL }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Android | ${{ env.ANDROID_VERSION }} |" >> $GITHUB_STEP_SUMMARY
         echo "| KSU | KernelSU-Next (next branch) |" >> $GITHUB_STEP_SUMMARY
         echo "| SUSFS | Enginex0/susfs4ksu (all 11 features) |" >> $GITHUB_STEP_SUMMARY
         echo "| ZeroMount | VFS path redirection (v1) |" >> $GITHUB_STEP_SUMMARY
         echo "| ZRAM | LZ4K/LZ4KD 8GB |" >> $GITHUB_STEP_SUMMARY
-        echo "| Device Profile | ${{ inputs.device_codename }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Device Profile | ${{ env.DEVICE_CODENAME }} |" >> $GITHUB_STEP_SUMMARY
