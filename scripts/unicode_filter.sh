@@ -5,10 +5,12 @@
 set -e
 cd "${1:-.}" || exit 1
 
-SUSFS_INCLUDE='\
-#ifdef CONFIG_KSU_SUSFS\
-#include <linux/susfs.h>\
-#endif'
+inject_susfs_include() {
+    sed -i "/$1/a\\
+#ifdef CONFIG_KSU_SUSFS\\
+#include <linux/susfs.h>\\
+#endif" "$2"
+}
 
 patch_namei() {
     local f="fs/namei.c"
@@ -16,7 +18,7 @@ patch_namei() {
 
     echo "[+] $f"
 
-    sed -i "/#include <linux\/uaccess.h>/a\\${SUSFS_INCLUDE}" "$f"
+    inject_susfs_include '#include <linux\/uaccess.h>' "$f"
 
     # do_mkdirat
     sed -i '/unsigned int lookup_flags = LOOKUP_DIRECTORY;/a\
@@ -78,7 +80,7 @@ patch_open() {
 
     echo "[+] $f"
 
-    sed -i "/#include <linux\/compat.h>/a\\${SUSFS_INCLUDE}" "$f"
+    inject_susfs_include '#include <linux\/compat.h>' "$f"
 
     # do_sys_openat2
     sed -i '/^static long do_sys_openat2/,/struct filename \*tmp;/{
@@ -98,7 +100,7 @@ patch_stat() {
 
     echo "[+] $f"
 
-    sed -i "/#include <linux\/compat.h>/a\\${SUSFS_INCLUDE}" "$f"
+    inject_susfs_include '#include <linux\/compat.h>' "$f"
 
     # vfs_statx
     sed -i '/^static int vfs_statx/,/int error;/{
