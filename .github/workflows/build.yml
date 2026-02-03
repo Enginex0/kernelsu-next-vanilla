@@ -378,6 +378,7 @@ jobs:
         "$ZEROMOUNT_DIR/inject-zeromount-dpath.sh" fs/d_path.c
         "$ZEROMOUNT_DIR/inject-zeromount-statfs.sh" fs/statfs.c
         "$ZEROMOUNT_DIR/inject-zeromount-xattr.sh" fs/xattr.c
+        "$ZEROMOUNT_DIR/inject-zeromount-stat.sh" fs/stat.c
 
         echo "=== All ZeroMount hooks injected ==="
 
@@ -389,6 +390,7 @@ jobs:
         grep -q "zeromount_get_virtual_path_for_inode" fs/d_path.c || { echo "FAIL: d_path.c hook missing"; exit 1; }
         grep -q "zeromount_spoof_statfs" fs/statfs.c || { echo "FAIL: statfs.c hook missing"; exit 1; }
         grep -q "zeromount_spoof_xattr" fs/xattr.c || { echo "FAIL: xattr.c hook missing"; exit 1; }
+        grep -q "zeromount_stat_hook" fs/stat.c || { echo "FAIL: stat.c hook missing"; exit 1; }
         echo "SUCCESS: All ZeroMount hooks validated"
 
         echo "=== ZeroMount integration complete ==="
