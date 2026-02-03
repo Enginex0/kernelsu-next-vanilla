@@ -718,9 +718,11 @@ jobs:
             STOCK_VERSION=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.version_string" "$PROFILE_FILE")
             STOCK_BUILD_USER=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.build_user" "$PROFILE_FILE")
             STOCK_BUILD_HOST=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.build_host" "$PROFILE_FILE")
+            STOCK_COMPILER=$(jq -r ".devices.${DEVICE_CODENAME}.stock_kernel.compiler_info // empty" "$PROFILE_FILE")
 
             echo "Stock release: $STOCK_RELEASE"
             echo "Stock version: $STOCK_VERSION"
+            [ -n "$STOCK_COMPILER" ] && echo "Stock compiler: $STOCK_COMPILER"
 
             # Patch setlocalversion to return stock release suffix
             cat > scripts/setlocalversion << 'SETLOCAL_EOF'
@@ -731,12 +733,16 @@ jobs:
             sed -i "s|\$STOCK_RELEASE_SUFFIX|${STOCK_RELEASE}|g" scripts/setlocalversion
             chmod +x scripts/setlocalversion
 
-            # Patch mkcompile_h for stock version string
+            # Patch mkcompile_h for stock version string and compiler
             if [ -f "scripts/mkcompile_h" ]; then
               sed -i "s|UTS_VERSION=.*|UTS_VERSION=\"${STOCK_VERSION}\"|" scripts/mkcompile_h
               if grep -q "LINUX_COMPILE_BY=" scripts/mkcompile_h; then
                 sed -i "s|LINUX_COMPILE_BY=.*|LINUX_COMPILE_BY=\"${STOCK_BUILD_USER}\"|" scripts/mkcompile_h
                 sed -i "s|LINUX_COMPILE_HOST=.*|LINUX_COMPILE_HOST=\"${STOCK_BUILD_HOST}\"|" scripts/mkcompile_h
+              fi
+              # Spoof compiler info in /proc/version
+              if [ -n "$STOCK_COMPILER" ] && grep -q "LINUX_COMPILER=" scripts/mkcompile_h; then
+                sed -i "s|LINUX_COMPILER=.*|LINUX_COMPILER=\"${STOCK_COMPILER}\"|" scripts/mkcompile_h
               fi
             fi
 
