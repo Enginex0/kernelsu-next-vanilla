@@ -176,101 +176,66 @@ jobs:
         curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/dev_susfs/kernel/setup.sh" | bash -s dev_susfs
         echo "=== KernelSU-Next added ==="
 
-    - name: Fix SUSFS API Compatibility
+    - name: Fix KernelSU-Next API Compatibility
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
-        echo "=== Aligning KernelSU-Next SUSFS API with custom fork ==="
-        # Custom SUSFS fork renamed CMD constant only (not the function):
-        # - CMD: CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS -> CMD_SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS
-        # - Function: susfs_set_hide_sus_mnts_for_non_su_procs (unchanged)
-        SUPERCALLS_FILE="$KERNEL_ROOT/KernelSU-Next/kernel/supercalls.c"
-        if [ -f "$SUPERCALLS_FILE" ]; then
-          # Only change the CMD constant, NOT the function name
-          # DISABLED: sed -i 's/CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS/CMD_SUSFS_HIDE_SUS_MNTS_FOR_ALL_PROCS/g' "$SUPERCALLS_FILE"
-          echo "CMD constant alignment applied to supercalls.c"
-        else
-          echo "WARNING: supercalls.c not found at $SUPERCALLS_FILE"
-        fi
-
-        # Add ksu_handle_sys_newfstatat stub - SUSFS references it but KernelSU-Next doesn't define it
         KSUD_FILE="$KERNEL_ROOT/KernelSU-Next/kernel/ksud.c"
-        if [ -f "$KSUD_FILE" ]; then
-          if ! grep -q "ksu_handle_sys_newfstatat" "$KSUD_FILE"; then
-            echo "Adding ksu_handle_sys_newfstatat stub to ksud.c..."
-            # Add stub function after ksu_handle_vfs_fstat
-            awk '/void ksu_handle_vfs_fstat/{found=1} found && /^}/{print; print "void ksu_handle_sys_newfstatat(int fd, loff_t *kstat_size_ptr) { }"; found=0; next}1' "$KSUD_FILE" > "$KSUD_FILE.tmp" && mv "$KSUD_FILE.tmp" "$KSUD_FILE"
-            echo "ksu_handle_sys_newfstatat stub added"
-          fi
+        if [ -f "$KSUD_FILE" ] && ! grep -q "ksu_handle_sys_newfstatat" "$KSUD_FILE"; then
+          awk '/void ksu_handle_vfs_fstat/{found=1} found && /^}/{print; print "void ksu_handle_sys_newfstatat(int fd, loff_t *kstat_size_ptr) { }"; found=0; next}1' "$KSUD_FILE" > "$KSUD_FILE.tmp" && mv "$KSUD_FILE.tmp" "$KSUD_FILE"
+          echo "[+] ksu_handle_sys_newfstatat stub added to ksud.c"
         fi
 
-        KCONFIG_FILE="$KERNEL_ROOT/KernelSU-Next/kernel/Kconfig"
-        if [ -f "$KCONFIG_FILE" ] && ! grep -q "KSU_SUSFS_UNICODE_FILTER" "$KCONFIG_FILE"; then
-          echo "Adding missing SUSFS Kconfig options..."
-          cat >> "$KCONFIG_FILE" << 'KCONFIG_EOF'
-        config KSU_SUSFS_UNICODE_FILTER
-            bool "Enable UNICODE_FILTER"
-            depends on KSU_SUSFS
-            default y
-            help
-              Filter paths containing suspicious unicode characters.
-        KCONFIG_EOF
-          sed -i 's/^        //' "$KCONFIG_FILE"
-          echo "UNICODE_FILTER Kconfig option added"
-        fi
-
-    - name: Apply Custom SUSFS Kernel Patches (All 11 Features)
+    - name: Clone Upstream SUSFS and Inject Custom Features
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
-        echo "=== Cloning Enginex0/susfs4ksu (custom fork with all features) ==="
         SUSFS_BRANCH="gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
-        git clone https://github.com/Enginex0/susfs4ksu.git -b "$SUSFS_BRANCH" "$SUSFS4KSU"
+        echo "=== Cloning upstream SUSFS (branch: $SUSFS_BRANCH) ==="
+        git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH" "$SUSFS4KSU"
 
-        echo "=== Injecting custom SUSFS command handler (add_sus_kstat_redirect) ==="
-        # KernelSU-Next dev_susfs already has SUSFS integration
-        # We only need to inject our new command handler inline
-        SUPERCALLS_FILE="$KERNEL_ROOT/KernelSU-Next/kernel/supercalls.c"
-        if [ -f "$SUPERCALLS_FILE" ] && ! grep -q "CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT" "$SUPERCALLS_FILE"; then
-          # Inject after CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY handler
-          sed -i '/CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY/,/#endif.*CONFIG_KSU_SUSFS_SUS_KSTAT/ {
-            /#endif.*CONFIG_KSU_SUSFS_SUS_KSTAT/ i\
-        if (cmd == CMD_SUSFS_ADD_SUS_KSTAT_REDIRECT) {\
-            susfs_add_sus_kstat_redirect(arg);\
-            return 0;\
-        }
-          }' "$SUPERCALLS_FILE"
-          echo "Custom command handler injected into supercalls.c"
-        else
-          echo "Note: supercalls.c already has add_sus_kstat_redirect or file not found"
-        fi
+        SUSFS_PATCHES="$SUSFS4KSU/kernel_patches"
+        INJECT_DIR="$GITHUB_WORKSPACE/scripts/susfs"
+        chmod +x "$INJECT_DIR"/*.sh
 
-        echo "=== Applying SUSFS kernel patches ==="
+        echo "=== Injecting custom features into upstream SUSFS ==="
+        bash "$INJECT_DIR/fix-susfs-safety.sh" "$SUSFS_PATCHES"
+        bash "$INJECT_DIR/inject-susfs-kstat-redirect.sh" "$SUSFS_PATCHES"
+        bash "$INJECT_DIR/inject-susfs-open-redirect-all.sh" "$SUSFS_PATCHES"
+        bash "$INJECT_DIR/inject-susfs-unicode-filter-func.sh" "$SUSFS_PATCHES"
+        bash "$INJECT_DIR/inject-susfs-supercall-dispatch.sh" "$SUSFS_PATCHES"
+        bash "$INJECT_DIR/inject-susfs-vfs-open-redirect-all.sh" "$SUSFS_PATCHES"
+        bash "$INJECT_DIR/inject-susfs-mount-display.sh" "$SUSFS_PATCHES"
+        bash "$INJECT_DIR/inject-susfs-zeromount-coupling.sh" "$SUSFS_PATCHES"
+
+        echo "=== Applying modified SUSFS to kernel ==="
         cd "$KERNEL_ROOT/common"
 
-        # Copy SUSFS kernel files (only .c and .h, not patches)
-        cp "$SUSFS4KSU/kernel_patches/fs/susfs.c" ./fs/
-        cp "$SUSFS4KSU/kernel_patches/include/linux/"*.h ./include/linux/
+        cp "$SUSFS_PATCHES/fs/susfs.c" ./fs/
+        cp "$SUSFS_PATCHES/include/linux/"*.h ./include/linux/
 
-        # Apply the main SUSFS kernel integration patch
-        SUSFS_PATCH="$SUSFS4KSU/kernel_patches/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch"
+        SUSFS_PATCH="$SUSFS_PATCHES/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch"
         if [ -f "$SUSFS_PATCH" ]; then
           patch -p1 --no-backup-if-mismatch < "$SUSFS_PATCH"
         else
           echo "ERROR: SUSFS patch not found: $SUSFS_PATCH" && exit 1
         fi
 
-        echo "=== Injecting Unicode filter hooks ==="
-        chmod +x "$GITHUB_WORKSPACE/scripts/unicode_filter.sh"
-        bash "$GITHUB_WORKSPACE/scripts/unicode_filter.sh" "$KERNEL_ROOT/common"
-        echo "=== Unicode filter hooks injected ==="
+        echo "=== Injecting custom handlers into KernelSU-Next ==="
+        bash "$INJECT_DIR/inject-susfs-custom-handlers.sh" \
+          "$KERNEL_ROOT/KernelSU-Next/kernel/supercalls.c" \
+          "$KERNEL_ROOT/common/fs/susfs.c" \
+          "$KERNEL_ROOT/KernelSU-Next/kernel/Kconfig" \
+          "${{ env.DEFCONFIG }}"
 
-        # Fix for android12 5.10 <= 209
+        echo "=== Injecting unicode filter VFS hooks ==="
+        bash "$GITHUB_WORKSPACE/scripts/unicode_filter.sh" "$KERNEL_ROOT/common"
+
         if [[ "${{ env.ANDROID_VERSION }}" == "android12" && "${{ env.KERNEL_VERSION }}" == "5.10" ]]; then
           if [[ "$ACTUAL_SUBLEVEL" -le 209 ]]; then
             sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
           fi
         fi
 
-        echo "=== Custom SUSFS patches applied ==="
+        echo "=== SUSFS integration complete ==="
 
     - name: Fix sucompat stat hook detection bypass
       working-directory: ${{ env.KERNEL_ROOT }}
@@ -361,7 +326,7 @@ jobs:
         cd common
 
         echo "=== Applying ZeroMount core patch ==="
-        patch -p1 < "$ZEROMOUNT_DIR/zeromount-core.patch"
+        patch -p1 -F3 --no-backup-if-mismatch < "$ZEROMOUNT_DIR/zeromount-core.patch"
 
         if [[ -f "fs/zeromount.c" && -f "include/linux/zeromount.h" ]]; then
           echo "SUCCESS: ZeroMount core files created"
@@ -373,6 +338,7 @@ jobs:
         echo "=== Running ZeroMount injection scripts ==="
         chmod +x "$ZEROMOUNT_DIR/inject-zeromount-"*.sh
 
+        "$ZEROMOUNT_DIR/inject-zeromount-stat.sh" fs/stat.c
         "$ZEROMOUNT_DIR/inject-zeromount-namei.sh" fs/namei.c
         "$ZEROMOUNT_DIR/inject-zeromount-readdir.sh" fs/readdir.c
         "$ZEROMOUNT_DIR/inject-zeromount-dpath.sh" fs/d_path.c
@@ -385,6 +351,7 @@ jobs:
         echo "CONFIG_ZEROMOUNT=y" >> arch/arm64/configs/gki_defconfig
 
         echo "=== Validating ZeroMount hooks ==="
+        grep -q "zeromount_spoof_stat" fs/stat.c || { echo "FAIL: stat.c hook missing"; exit 1; }
         grep -q "zeromount_getname_hook" fs/namei.c || { echo "FAIL: namei.c hook missing"; exit 1; }
         grep -q "zeromount_inject_dents64" fs/readdir.c || { echo "FAIL: readdir.c hook missing"; exit 1; }
         grep -q "zeromount_get_virtual_path_for_inode" fs/d_path.c || { echo "FAIL: d_path.c hook missing"; exit 1; }
@@ -1000,7 +967,7 @@ jobs:
         echo "| Kernel | ${{ env.KERNEL_VERSION }}.${{ env.ACTUAL_SUBLEVEL }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Android | ${{ env.ANDROID_VERSION }} |" >> $GITHUB_STEP_SUMMARY
         echo "| KSU | KernelSU-Next (next branch) |" >> $GITHUB_STEP_SUMMARY
-        echo "| SUSFS | Enginex0/susfs4ksu (all 11 features) |" >> $GITHUB_STEP_SUMMARY
+        echo "| SUSFS | upstream + injection scripts |" >> $GITHUB_STEP_SUMMARY
         echo "| ZeroMount | VFS path redirection (v1) |" >> $GITHUB_STEP_SUMMARY
         echo "| ZRAM | LZ4K/LZ4KD 8GB |" >> $GITHUB_STEP_SUMMARY
         echo "| Device Profile | ${{ env.DEVICE_CODENAME }} |" >> $GITHUB_STEP_SUMMARY
