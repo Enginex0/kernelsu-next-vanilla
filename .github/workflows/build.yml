@@ -229,7 +229,7 @@ jobs:
           "${{ env.DEFCONFIG }}"
 
         echo "=== Injecting unicode filter VFS hooks ==="
-        bash "$GITHUB_WORKSPACE/scripts/unicode_filter.sh" "$KERNEL_ROOT/common"
+        bash "$GITHUB_WORKSPACE/scripts/susfs/unicode_filter.sh" "$KERNEL_ROOT/common"
 
         if [[ "${{ env.ANDROID_VERSION }}" == "android12" && "${{ env.KERNEL_VERSION }}" == "5.10" ]]; then
           if [[ "$ACTUAL_SUBLEVEL" -le 209 ]]; then
@@ -322,8 +322,7 @@ jobs:
       run: |
         echo "=== Integrating ZeroMount (SUSFS's Spouse!) ==="
 
-        git clone --depth 1 https://github.com/Enginex0/zeromount.git "$GITHUB_WORKSPACE/zeromount"
-        ZEROMOUNT_DIR="$GITHUB_WORKSPACE/zeromount/patches"
+        ZEROMOUNT_DIR="$GITHUB_WORKSPACE/scripts/zeromount"
 
         cd common
 
@@ -365,80 +364,8 @@ jobs:
     - name: Fix ZeroMount SUSFS detection bypass
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
-        echo "=== Adding SUSFS umounted checks to ZeroMount ==="
-        ZEROMOUNT_FILE="fs/zeromount.c"
-
-        if [ ! -f "$ZEROMOUNT_FILE" ]; then
-          echo "zeromount.c not found, skipping"
-          exit 0
-        fi
-
-        if grep -q "susfs_is_current_proc_umounted" "$ZEROMOUNT_FILE"; then
-          echo "SUSFS bypass already present in zeromount.c"
-          exit 0
-        fi
-
-        echo "Patching ZeroMount for SUSFS bypass..."
-
-        # Use awk to inject SUSFS checks
-        awk '
-        /#include <linux\/zeromount.h>/ && !susfs_include_done {
-          print
-          print "#ifdef CONFIG_KSU_SUSFS"
-          print "#include <linux/susfs.h>"
-          print "#endif"
-          susfs_include_done = 1
-          next
-        }
-        /^static bool zeromount_is_uid_blocked\(uid_t uid\)/ { in_uid_blocked = 1 }
-        in_uid_blocked && /if \(ZEROMOUNT_DISABLED\(\)\) return false;/ {
-          print
-          print "#ifdef CONFIG_KSU_SUSFS"
-          print "\tif (susfs_is_current_proc_umounted()) return true;"
-          print "#endif"
-          in_uid_blocked = 0
-          next
-        }
-        /^bool zeromount_is_traversal_allowed/ { in_traversal = 1 }
-        in_traversal && /if \(!inode \|\| ZEROMOUNT_DISABLED\(\)/ {
-          print
-          print "#ifdef CONFIG_KSU_SUSFS"
-          print "\tif (susfs_is_current_proc_umounted()) return false;"
-          print "#endif"
-          in_traversal = 0
-          next
-        }
-        /^void zeromount_inject_dents64/ { in_dents64 = 1 }
-        in_dents64 && /if \(ZEROMOUNT_DISABLED\(\) \|\| zeromount_is_uid_blocked/ {
-          print
-          print "#ifdef CONFIG_KSU_SUSFS"
-          print "\tif (susfs_is_current_proc_umounted()) return;"
-          print "#endif"
-          in_dents64 = 0
-          next
-        }
-        /^void zeromount_inject_dents\(/ { in_dents = 1 }
-        in_dents && /if \(ZEROMOUNT_DISABLED\(\) \|\| zeromount_is_uid_blocked/ {
-          print
-          print "#ifdef CONFIG_KSU_SUSFS"
-          print "\tif (susfs_is_current_proc_umounted()) return;"
-          print "#endif"
-          in_dents = 0
-          next
-        }
-        { print }
-        ' "$ZEROMOUNT_FILE" > "${ZEROMOUNT_FILE}.tmp" && mv "${ZEROMOUNT_FILE}.tmp" "$ZEROMOUNT_FILE"
-
-        # Verify
-        COUNT=$(grep -c "susfs_is_current_proc_umounted" "$ZEROMOUNT_FILE" || echo "0")
-        echo "SUSFS bypass checks in zeromount.c: $COUNT"
-        if [ "$COUNT" -ge 2 ]; then
-          echo "SUCCESS: ZeroMount SUSFS bypass fix applied"
-        else
-          echo "WARNING: Verify manually"
-        fi
-
-        echo "=== ZeroMount SUSFS fix complete ==="
+        chmod +x "$GITHUB_WORKSPACE/scripts/zeromount/fix-zeromount-susfs-bypass.sh"
+        bash "$GITHUB_WORKSPACE/scripts/zeromount/fix-zeromount-susfs-bypass.sh" fs/zeromount.c
 
     - name: Upgrade LZ4 to v1.10.0 with ARM64 NEON
       working-directory: ${{ env.KERNEL_ROOT }}/common
