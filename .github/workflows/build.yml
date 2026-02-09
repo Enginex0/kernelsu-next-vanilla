@@ -202,8 +202,6 @@ jobs:
         bash "$INJECT_DIR/inject-susfs-open-redirect-all.sh" "$SUSFS_PATCHES"
         bash "$INJECT_DIR/inject-susfs-unicode-filter-func.sh" "$SUSFS_PATCHES"
         bash "$INJECT_DIR/inject-susfs-supercall-dispatch.sh" "$SUSFS_PATCHES"
-        bash "$INJECT_DIR/inject-susfs-vfs-open-redirect-all.sh" "$SUSFS_PATCHES"
-        bash "$INJECT_DIR/inject-susfs-mount-display.sh" "$SUSFS_PATCHES"
         bash "$INJECT_DIR/inject-susfs-zeromount-coupling.sh" "$SUSFS_PATCHES"
 
         echo "=== Applying modified SUSFS to kernel ==="
@@ -218,6 +216,10 @@ jobs:
         else
           echo "ERROR: SUSFS patch not found: $SUSFS_PATCH" && exit 1
         fi
+
+        echo "=== Post-patch: injecting into kernel source ==="
+        bash "$INJECT_DIR/inject-susfs-vfs-open-redirect-all.sh" "$KERNEL_ROOT/common"
+        bash "$INJECT_DIR/inject-susfs-mount-display.sh" "$KERNEL_ROOT/common"
 
         echo "=== Injecting custom handlers into KernelSU-Next ==="
         bash "$INJECT_DIR/inject-susfs-custom-handlers.sh" \
