@@ -38,22 +38,21 @@ if grep -q 'BIT_OPEN_REDIRECT_ALL' "$NAMEI"; then
     echo "[=] BIT_OPEN_REDIRECT_ALL check already present in do_filp_open"
 else
     echo "[+] Replacing do_filp_open redirect block with two-branch check"
-    # Match the #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT block containing BIT_OPEN_REDIRECT
+    # Upstream uses test_bit(AS_FLAGS_OPEN_REDIRECT, ...) style
     awk '
     /^#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT/ {
         block = $0 "\n"
         is_redirect_block = 0
         while ((getline line) > 0) {
             block = block line "\n"
-            if (line ~ /BIT_OPEN_REDIRECT/) is_redirect_block = 1
+            if (line ~ /AS_FLAGS_OPEN_REDIRECT|BIT_OPEN_REDIRECT/) is_redirect_block = 1
             if (line ~ /^#endif/) break
         }
         if (is_redirect_block && !already_replaced) {
             already_replaced = 1
             print "#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT"
             print "\tif (!IS_ERR(filp)) {"
-            print "\t\tunsigned long __susfs_as_flags = filp->f_inode->i_mapping->flags;"
-            print "\t\tif (unlikely(__susfs_as_flags & BIT_OPEN_REDIRECT_ALL)) {"
+            print "\t\tif (unlikely(test_bit(AS_FLAGS_OPEN_REDIRECT_ALL, &filp->f_inode->i_mapping->flags))) {"
             print "\t\t\tfake_pathname = susfs_get_redirected_path_all(filp->f_inode->i_ino);"
             print "\t\t\tif (!IS_ERR(fake_pathname)) {"
             print "\t\t\t\trestore_nameidata();"
@@ -68,7 +67,9 @@ else
             print "\t\t\t\tputname(fake_pathname);"
             print "\t\t\t\treturn filp;"
             print "\t\t\t}"
-            print "\t\t} else if (unlikely(__susfs_as_flags & BIT_OPEN_REDIRECT) && current_uid().val < 2000) {"
+            print "\t\t} else if (unlikely(test_bit(AS_FLAGS_OPEN_REDIRECT, &filp->f_inode->i_mapping->flags) &&"
+            print "\t\t\tcurrent_uid().val < 2000))"
+            print "\t\t{"
             print "\t\t\tfake_pathname = susfs_get_redirected_path(filp->f_inode->i_ino);"
             print "\t\t\tif (!IS_ERR(fake_pathname)) {"
             print "\t\t\t\trestore_nameidata();"
