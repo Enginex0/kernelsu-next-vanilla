@@ -34,8 +34,8 @@ else
 fi
 
 # --- 2. Replace single-check redirect with two-branch (ALL first, then per-UID) ---
-if grep -q 'BIT_OPEN_REDIRECT_ALL' "$NAMEI"; then
-    echo "[=] BIT_OPEN_REDIRECT_ALL check already present in do_filp_open"
+if grep -q 'AS_FLAGS_OPEN_REDIRECT_ALL' "$NAMEI"; then
+    echo "[=] AS_FLAGS_OPEN_REDIRECT_ALL check already present in do_filp_open"
 else
     echo "[+] Replacing do_filp_open redirect block with two-branch check"
     # Upstream uses test_bit(AS_FLAGS_OPEN_REDIRECT, ...) style
@@ -101,8 +101,8 @@ if ! grep -q 'susfs_get_redirected_path_all' "$NAMEI"; then
     echo "FATAL: susfs_get_redirected_path_all not found after injection"
     exit 1
 fi
-if ! grep -q 'BIT_OPEN_REDIRECT_ALL' "$NAMEI"; then
-    echo "FATAL: BIT_OPEN_REDIRECT_ALL not found after injection"
+if ! grep -q 'AS_FLAGS_OPEN_REDIRECT_ALL' "$NAMEI"; then
+    echo "FATAL: AS_FLAGS_OPEN_REDIRECT_ALL not found after injection"
     exit 1
 fi
 
