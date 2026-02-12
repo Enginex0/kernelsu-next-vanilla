@@ -145,7 +145,7 @@ void susfs_add_sus_kstat_redirect(void __user **user_info) {\
 \t\tinode_virtual = d_inode(p_virtual.dentry);\
 \t\tif (inode_virtual) {\
 \t\t\tvirtual_ino = inode_virtual->i_ino;\
-\t\t\tif (!(inode_virtual->i_mapping->flags & BIT_SUS_KSTAT)) {\
+\t\t\tif (!test_bit(AS_FLAGS_SUS_KSTAT, &inode_virtual->i_mapping->flags)) {\
 \t\t\t\tspin_lock(&inode_virtual->i_lock);\
 \t\t\t\tset_bit(AS_FLAGS_SUS_KSTAT, &inode_virtual->i_mapping->flags);\
 \t\t\t\tspin_unlock(&inode_virtual->i_lock);\
@@ -173,7 +173,7 @@ void susfs_add_sus_kstat_redirect(void __user **user_info) {\
 \t\tinfo.err = -EINVAL;\
 \t\tgoto out_copy_to_user;\
 \t}\
-\n\tif (!(inode_real->i_mapping->flags & BIT_SUS_KSTAT)) {\
+\n\tif (!test_bit(AS_FLAGS_SUS_KSTAT, &inode_real->i_mapping->flags)) {\
 \t\tspin_lock(&inode_real->i_lock);\
 \t\tset_bit(AS_FLAGS_SUS_KSTAT, &inode_real->i_mapping->flags);\
 \t\tspin_unlock(&inode_real->i_lock);\
