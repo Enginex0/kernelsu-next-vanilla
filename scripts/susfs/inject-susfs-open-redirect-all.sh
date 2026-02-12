@@ -51,7 +51,7 @@ if grep -q 'BIT_OPEN_REDIRECT_ALL' "$SUSFS_DEF_H"; then
     echo "[=] BIT_OPEN_REDIRECT_ALL already present in susfs_def.h"
 else
     echo "[+] Injecting BIT_OPEN_REDIRECT_ALL into susfs_def.h"
-    sed -i '/^#define BIT_SUS_MAPS/a #define BIT_OPEN_REDIRECT_ALL BIT(40)' "$SUSFS_DEF_H"
+    sed -i '/^#define AS_FLAGS_OPEN_REDIRECT_ALL/a #define BIT_OPEN_REDIRECT_ALL BIT(40)' "$SUSFS_DEF_H"
     ((inject_count++)) || true
 fi
 

@@ -188,7 +188,7 @@ jobs:
     - name: Clone Upstream SUSFS and Inject Custom Features
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
-        SUSFS_BRANCH="gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}"
+        SUSFS_BRANCH="gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}-dev"
         echo "=== Cloning upstream SUSFS (branch: $SUSFS_BRANCH) ==="
         git clone --depth 1 https://gitlab.com/simonpunk/susfs4ksu.git -b "$SUSFS_BRANCH" "$SUSFS4KSU"
 

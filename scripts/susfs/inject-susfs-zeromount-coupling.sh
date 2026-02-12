@@ -1,7 +1,7 @@
 #!/bin/bash
 # inject-susfs-zeromount-coupling.sh
 # Injects zeromount_is_uid_blocked extern and susfs_is_uid_zeromount_excluded
-# inline wrapper into susfs_def.h, and modifies 3 uid-check functions in susfs.c
+# inline wrapper into susfs_def.h, and modifies is_i_uid_not_allowed in susfs.c
 # to add zeromount exclusion.
 #
 # Usage: ./inject-susfs-zeromount-coupling.sh <SUSFS_KERNEL_PATCHES_DIR>
@@ -54,21 +54,13 @@ if ! grep -q 'zeromount_is_uid_blocked' "$SUSFS_DEF_H"; then
     exit 1
 fi
 
-# --- 2. Modify is_i_uid_in_android_data_not_allowed() in susfs.c ---
+# --- 2. Modify is_i_uid_not_allowed() in susfs.c ---
+# Upstream dev consolidated the 3 uid-check functions into just is_i_uid_not_allowed.
 if grep -q 'susfs_is_uid_zeromount_excluded' "$SUSFS_C"; then
     echo "[=] zeromount checks already present in susfs.c"
 else
-    echo "[+] Injecting zeromount checks into 3 uid-check functions in susfs.c"
+    echo "[+] Injecting zeromount check into is_i_uid_not_allowed in susfs.c"
 
-    # Function 1: is_i_uid_in_android_data_not_allowed
-    # Pattern: "static inline bool is_i_uid_in_android_data_not_allowed(uid_t i_uid) {"
-    # Insert zeromount check as first line of body
-    sed -i '/^static inline bool is_i_uid_in_android_data_not_allowed(uid_t i_uid) {$/a \\tif (susfs_is_uid_zeromount_excluded(current_uid().val))\n\t\treturn false;' "$SUSFS_C"
-
-    # Function 2: is_i_uid_in_sdcard_not_allowed
-    sed -i '/^static inline bool is_i_uid_in_sdcard_not_allowed(void) {$/a \\tif (susfs_is_uid_zeromount_excluded(current_uid().val))\n\t\treturn false;' "$SUSFS_C"
-
-    # Function 3: is_i_uid_not_allowed
     sed -i '/^static inline bool is_i_uid_not_allowed(uid_t i_uid) {$/a \\tif (susfs_is_uid_zeromount_excluded(current_uid().val))\n\t\treturn false;' "$SUSFS_C"
 
     ((inject_count++)) || true
@@ -76,8 +68,8 @@ fi
 
 # Validate
 count=$(grep -c 'susfs_is_uid_zeromount_excluded' "$SUSFS_C" || true)
-if [ "$count" -lt 3 ]; then
-    echo "FATAL: expected at least 3 zeromount checks in susfs.c, found $count"
+if [ "$count" -lt 1 ]; then
+    echo "FATAL: expected at least 1 zeromount check in susfs.c, found $count"
     exit 1
 fi
 
