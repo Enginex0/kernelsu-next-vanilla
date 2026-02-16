@@ -125,7 +125,7 @@ jobs:
       run: |
         FORMATTED_BRANCH="${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}-${{ env.OS_PATCH_LEVEL }}"
 
-        repo init -u https://android.googlesource.com/kernel/manifest -b common-${FORMATTED_BRANCH} --repo-rev=v2.16 --depth=1
+        repo init -u https://android.googlesource.com/kernel/manifest -b common-${FORMATTED_BRANCH} --repo-rev=stable --depth=1
 
         REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common ${FORMATTED_BRANCH})
         DEFAULT_MANIFEST_PATH=.repo/manifests/default.xml
@@ -411,26 +411,21 @@ jobs:
         FAIL=0
 
         for f in fs/stat.c fs/namei.c fs/readdir.c fs/d_path.c fs/statfs.c fs/xattr.c fs/zeromount.c; do
-          OPENS=$(grep -c '#if' "$f" || true)
-          CLOSES=$(grep -c '#endif' "$f" || true)
-          if [[ "$OPENS" -ne "$CLOSES" ]]; then
-            echo "FAIL: $f has unbalanced #if/#endif ($OPENS opens, $CLOSES closes)"
-            FAIL=1
-          fi
-
           BRACES_OPEN=$(tr -cd '{' < "$f" | wc -c)
           BRACES_CLOSE=$(tr -cd '}' < "$f" | wc -c)
           if [[ "$BRACES_OPEN" -ne "$BRACES_CLOSE" ]]; then
             echo "FAIL: $f has unbalanced braces ($BRACES_OPEN open, $BRACES_CLOSE close)"
             FAIL=1
+          else
+            echo "  $f: braces balanced ($BRACES_OPEN pairs)"
           fi
         done
 
         if [[ "$FAIL" -ne 0 ]]; then
-          echo "WARNING: Post-injection heuristic check found imbalances (may be false positive from SUSFS+ZeroMount+unicode_filter overlapping in same files)"
-          echo "Proceeding — the compiler is the real validator"
+          echo "ERROR: Brace imbalance detected — likely injection bug"
+          exit 1
         else
-          echo "SUCCESS: All injected files have balanced #if/#endif and braces"
+          echo "SUCCESS: All injected files have balanced braces"
         fi
 
     - name: Upgrade LZ4 to v1.10.0 with ARM64 NEON
@@ -539,7 +534,11 @@ jobs:
         CONFIG_IP_SET_LIST_SET=y
         DEFEOF
         sed -i 's/^        //' "${{ env.DEFCONFIG }}"
-        # ZRAM/ZSMALLOC must stay =m to match gki_aarch64_modules list
+
+        # Dedup: injection scripts and base defconfig may already define some symbols.
+        # Keep last occurrence (our overrides) to suppress kconfig reassignment warnings.
+        tac "${{ env.DEFCONFIG }}" | awk -F= '/^CONFIG_/{if(seen[$1]++)next} {print}' | tac > "${{ env.DEFCONFIG }}.tmp"
+        mv "${{ env.DEFCONFIG }}.tmp" "${{ env.DEFCONFIG }}"
 
         # Disable defconfig check for build
         if [[ "${{ env.KERNEL_VERSION }}" == "6.12" ]]; then
@@ -726,7 +725,7 @@ jobs:
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
         if [ -f "build/build.sh" ]; then
-          LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || exit 1
+          HOSTLD=ld.lld LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh || exit 1
         else
           tools/bazel build --config=fast --config=stamp --lto=thin //common:kernel_aarch64_dist || exit 1
         fi
