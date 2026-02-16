@@ -28,7 +28,7 @@ fi
 echo "=== fix-susfs-safety ==="
 fix_count=0
 
-# --- 1. (removed: fsnotify_backend.h is required for sdcard monitor) ---
+# --- 1. (skipped: fsnotify_backend.h required for sdcard monitor) ---
 
 # --- 2. Fix trailing whitespace in disabled log macros ---
 if grep -q 'SUSFS_LOGI(fmt, \.\.\.) $' "$SUSFS_C"; then
@@ -307,10 +307,7 @@ else
     echo "[=] sus_mount default already true"
 fi
 
-# --- 7. Fix trailing whitespace before kzalloc in cmdline_or_bootconfig ---
-sed -i '/void susfs_set_cmdline_or_bootconfig/,/^}/ {
-    s/	$/	/
-}' "$SUSFS_C"
+# --- 7. (removed: trailing whitespace fix was a no-op) ---
 
 # --- 8. Fix format specifier: spoofed_size is loff_t (long long), not unsigned int ---
 # Upstream uses '%u' for spoofed_size in the #else (non-STAT64) SUSFS_LOGI paths
@@ -320,16 +317,6 @@ if grep -q "spoofed_size: '%u'" "$SUSFS_C"; then
     ((fix_count++)) || true
 else
     echo "[=] spoofed_size format specifier already correct"
-fi
-
-# --- 9. Null guards for susfs_is_base_dentry_* (prevents kernel panic on null base) ---
-if grep -q 'return (base->d_inode->i_mapping->flags & BIT_ANDROID_DATA_ROOT_DIR)' "$SUSFS_C"; then
-    echo "[+] Adding null guards to susfs_is_base_dentry functions"
-    sed -i 's/return (base->d_inode->i_mapping->flags & BIT_ANDROID_DATA_ROOT_DIR);/return (base \&\& !IS_ERR(base) \&\& base->d_inode \&\& (base->d_inode->i_mapping->flags \& BIT_ANDROID_DATA_ROOT_DIR));/' "$SUSFS_C"
-    sed -i 's/return (base->d_inode->i_mapping->flags & BIT_ANDROID_SDCARD_ROOT_DIR);/return (base \&\& !IS_ERR(base) \&\& base->d_inode \&\& (base->d_inode->i_mapping->flags \& BIT_ANDROID_SDCARD_ROOT_DIR));/' "$SUSFS_C"
-    ((fix_count++)) || true
-else
-    echo "[=] susfs_is_base_dentry null guards already present"
 fi
 
 # --- 10. Remove EACCES permission leak from SUS_PATH in GKI patch ---

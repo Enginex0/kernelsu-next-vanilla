@@ -1,7 +1,14 @@
 #!/bin/bash
 # inject-zeromount-statfs.sh - Inject ZeroMount statfs spoofing hooks into fs/statfs.c
+#
+# user_statfs() is stable across 5.10-6.6 (identical signature and body).
+#
+# Usage: ./inject-zeromount-statfs.sh <path-to-statfs.c>
 
 set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "${SCRIPT_DIR}/zeromount-common.sh"
 
 TARGET="${1:-fs/statfs.c}"
 
@@ -18,7 +25,8 @@ if grep -q "zeromount_spoof_statfs" "$TARGET"; then
     exit 0
 fi
 
-cp "$TARGET" "${TARGET}.orig"
+detect_kernel_version "$TARGET"
+zm_backup "$TARGET"
 
 echo "[INFO] Injecting include..."
 sed -i '/#include "internal\.h"/a\
@@ -26,11 +34,7 @@ sed -i '/#include "internal\.h"/a\
 #include <linux/zeromount.h>\
 #endif' "$TARGET"
 
-if ! grep -q '#include <linux/zeromount.h>' "$TARGET"; then
-    echo "[ERROR] Failed to inject include"
-    mv "${TARGET}.orig" "$TARGET"
-    exit 1
-fi
+verify_injection "$TARGET" '#include <linux/zeromount.h>' "Failed to inject include"
 echo "[OK] Include injected"
 
 echo "[INFO] Injecting user_statfs hook..."
@@ -70,16 +74,11 @@ in_user_statfs && /error = vfs_statfs\(&path, st\);/ && !call_injected {
 { print }
 ' "$TARGET" > "${TARGET}.tmp" && mv "${TARGET}.tmp" "$TARGET"
 
-if ! grep -q 'zeromount_spoof_statfs' "$TARGET"; then
-    echo "[ERROR] Failed to inject user_statfs hook"
-    mv "${TARGET}.orig" "$TARGET"
-    exit 1
-fi
+verify_injection "$TARGET" 'zeromount_spoof_statfs' "Failed to inject user_statfs hook"
 echo "[OK] user_statfs hook injected"
 
-rm -f "${TARGET}.orig"
+zm_cleanup
 
-echo "[SUCCESS] ZeroMount statfs hooks injected"
+echo "[SUCCESS] ZeroMount statfs hooks injected ($ZM_API variant)"
 echo "  - Include: <linux/zeromount.h>"
 echo "  - Hook: user_statfs() -> zeromount_spoof_statfs(pathname, st)"
-exit 0

@@ -317,36 +317,70 @@ jobs:
         fi
         echo "=== sucompat stat hook fix complete ==="
 
+    - name: Pre-flight ZeroMount script validation
+      run: |
+        set -euo pipefail
+
+        ZEROMOUNT_DIR="$GITHUB_WORKSPACE/scripts/zeromount"
+
+        echo "=== ZeroMount pre-flight checks ==="
+
+        for f in inject-zeromount-core.sh inject-zeromount-stat.sh inject-zeromount-namei.sh \
+                 inject-zeromount-readdir.sh inject-zeromount-dpath.sh inject-zeromount-statfs.sh \
+                 inject-zeromount-xattr.sh zeromount-common.sh fix-zeromount-susfs-bypass.sh; do
+          [[ -f "$ZEROMOUNT_DIR/$f" ]] || { echo "FAIL: missing $f"; exit 1; }
+          bash -n "$ZEROMOUNT_DIR/$f" || { echo "FAIL: syntax error in $f"; exit 1; }
+        done
+
+        for f in zeromount.c zeromount.h; do
+          [[ -f "$ZEROMOUNT_DIR/src/$f" ]] || { echo "FAIL: missing src/$f"; exit 1; }
+        done
+
+        echo "SUCCESS: All ZeroMount files present and syntax-valid"
+
     - name: Integrate ZeroMount VFS Path Redirection
       working-directory: ${{ env.KERNEL_ROOT }}
       run: |
-        echo "=== Integrating ZeroMount (SUSFS's Spouse!) ==="
+        set -euo pipefail
 
+        echo "=== Integrating ZeroMount ==="
         ZEROMOUNT_DIR="$GITHUB_WORKSPACE/scripts/zeromount"
 
         cd common
 
-        echo "=== Applying ZeroMount core patch ==="
-        patch -p1 -F3 --no-backup-if-mismatch < "$ZEROMOUNT_DIR/zeromount-core.patch"
+        echo "=== Injecting ZeroMount core (Kconfig + Makefile + source files) ==="
+        chmod +x "$ZEROMOUNT_DIR/inject-zeromount-core.sh"
+        "$ZEROMOUNT_DIR/inject-zeromount-core.sh" .
 
-        if [[ -f "fs/zeromount.c" && -f "include/linux/zeromount.h" ]]; then
-          echo "SUCCESS: ZeroMount core files created"
-        else
-          echo "ERROR: ZeroMount core files missing!"
-          exit 1
-        fi
+        [[ -f "fs/zeromount.c" ]] || { echo "FAIL: zeromount.c missing"; exit 1; }
+        [[ -f "include/linux/zeromount.h" ]] || { echo "FAIL: zeromount.h missing"; exit 1; }
+        grep -q "CONFIG_ZEROMOUNT" fs/Kconfig || { echo "FAIL: Kconfig not patched"; exit 1; }
+        grep -q "zeromount.o" fs/Makefile || { echo "FAIL: Makefile not patched"; exit 1; }
+        echo "SUCCESS: ZeroMount core files installed"
 
         echo "=== Running ZeroMount injection scripts ==="
         chmod +x "$ZEROMOUNT_DIR/inject-zeromount-"*.sh
+        chmod +x "$ZEROMOUNT_DIR/zeromount-common.sh"
 
         "$ZEROMOUNT_DIR/inject-zeromount-stat.sh" fs/stat.c
-        "$ZEROMOUNT_DIR/inject-zeromount-namei.sh" fs/namei.c
-        "$ZEROMOUNT_DIR/inject-zeromount-readdir.sh" fs/readdir.c
-        "$ZEROMOUNT_DIR/inject-zeromount-dpath.sh" fs/d_path.c
-        "$ZEROMOUNT_DIR/inject-zeromount-statfs.sh" fs/statfs.c
-        "$ZEROMOUNT_DIR/inject-zeromount-xattr.sh" fs/xattr.c
+        echo "  [1/6] stat.c ✓"
 
-        echo "=== All ZeroMount hooks injected ==="
+        "$ZEROMOUNT_DIR/inject-zeromount-namei.sh" fs/namei.c
+        echo "  [2/6] namei.c ✓"
+
+        "$ZEROMOUNT_DIR/inject-zeromount-readdir.sh" fs/readdir.c
+        echo "  [3/6] readdir.c ✓"
+
+        "$ZEROMOUNT_DIR/inject-zeromount-dpath.sh" fs/d_path.c
+        echo "  [4/6] d_path.c ✓"
+
+        "$ZEROMOUNT_DIR/inject-zeromount-statfs.sh" fs/statfs.c
+        echo "  [5/6] statfs.c ✓"
+
+        "$ZEROMOUNT_DIR/inject-zeromount-xattr.sh" fs/xattr.c
+        echo "  [6/6] xattr.c ✓"
+
+        echo "=== All 6 ZeroMount hooks injected ==="
 
         echo "CONFIG_ZEROMOUNT=y" >> arch/arm64/configs/gki_defconfig
 
@@ -361,11 +395,39 @@ jobs:
 
         echo "=== ZeroMount integration complete ==="
 
-    - name: Fix ZeroMount SUSFS detection bypass
+    - name: Validate ZeroMount SUSFS detection bypass
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
+        set -euo pipefail
         chmod +x "$GITHUB_WORKSPACE/scripts/zeromount/fix-zeromount-susfs-bypass.sh"
-        bash "$GITHUB_WORKSPACE/scripts/zeromount/fix-zeromount-susfs-bypass.sh" fs/zeromount.c
+        "$GITHUB_WORKSPACE/scripts/zeromount/fix-zeromount-susfs-bypass.sh" fs/zeromount.c
+
+    - name: Post-injection ZeroMount C syntax validation
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        set -euo pipefail
+
+        echo "=== ZeroMount post-injection validation ==="
+        FAIL=0
+
+        for f in fs/stat.c fs/namei.c fs/readdir.c fs/d_path.c fs/statfs.c fs/xattr.c fs/zeromount.c; do
+          OPENS=$(grep -c '#if' "$f" || true)
+          CLOSES=$(grep -c '#endif' "$f" || true)
+          if [[ "$OPENS" -ne "$CLOSES" ]]; then
+            echo "FAIL: $f has unbalanced #if/#endif ($OPENS opens, $CLOSES closes)"
+            FAIL=1
+          fi
+
+          BRACES_OPEN=$(tr -cd '{' < "$f" | wc -c)
+          BRACES_CLOSE=$(tr -cd '}' < "$f" | wc -c)
+          if [[ "$BRACES_OPEN" -ne "$BRACES_CLOSE" ]]; then
+            echo "FAIL: $f has unbalanced braces ($BRACES_OPEN open, $BRACES_CLOSE close)"
+            FAIL=1
+          fi
+        done
+
+        [[ "$FAIL" -eq 0 ]] || { echo "FATAL: Post-injection validation failed"; exit 1; }
+        echo "SUCCESS: All injected files have balanced #if/#endif and braces"
 
     - name: Upgrade LZ4 to v1.10.0 with ARM64 NEON
       working-directory: ${{ env.KERNEL_ROOT }}/common

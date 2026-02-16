@@ -10,12 +10,17 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "${SCRIPT_DIR}/zeromount-common.sh"
+
 READDIR_FILE="${1:-fs/readdir.c}"
 
 if [ ! -f "$READDIR_FILE" ]; then
     echo "Error: File not found: $READDIR_FILE"
     exit 1
 fi
+
+detect_kernel_version "$READDIR_FILE"
 
 echo "Injecting ZeroMount readdir hooks into: $READDIR_FILE"
 
@@ -34,7 +39,7 @@ if ! grep -q 'SYSCALL_DEFINE3(getdents64,' "$READDIR_FILE"; then
     exit 1
 fi
 
-cp "$READDIR_FILE" "${READDIR_FILE}.bak"
+zm_backup "$READDIR_FILE"
 
 echo "  [1/4] Injecting zeromount.h include..."
 sed -i '/#include <linux\/uaccess.h>/a\
@@ -48,6 +53,7 @@ BEGIN { state = 0 }
 
 /^SYSCALL_DEFINE3\(getdents,/ { state = 1 }
 state == 1 && /^SYSCALL_DEFINE3\(getdents64,/ { state = 0 }
+state == 1 && /^}$/ { state = 0 }
 
 state == 1 && /^[[:space:]]*int error;[[:space:]]*$/ && !var_done {
     print
@@ -103,7 +109,8 @@ echo "  [3/4] Injecting hooks into getdents64..."
 awk '
 BEGIN { state = 0 }
 
-/^SYSCALL_DEFINE3\(getdents64,/ { state = 1 }
+# 5.4: getdents64 syscall is a wrapper; real impl is ksys_getdents64()
+/^SYSCALL_DEFINE3\(getdents64,/ || /^int ksys_getdents64\(/ { state = 1 }
 state == 1 && /^COMPAT_SYSCALL_DEFINE3\(getdents,/ { state = 0 }
 state == 1 && /^}$/ { state = 0 }
 
@@ -274,10 +281,10 @@ fi
 
 echo ""
 if [ "$ERRORS" -eq 0 ]; then
-    echo "ZeroMount readdir hooks injection complete. Backup at ${READDIR_FILE}.bak"
+    zm_cleanup
+    echo "ZeroMount readdir hooks injection complete."
     exit 0
 else
     echo "Injection completed with $ERRORS verification failures."
-    echo "Review the output and ${READDIR_FILE}.bak if needed."
     exit 1
 fi
