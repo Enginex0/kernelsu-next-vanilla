@@ -115,9 +115,7 @@ patch_namei() {
     fi
 
     # renameat2 — SYSCALL wrapper, always const char __user *
-    # SYSCALL_DEFINE5(renameat2,...) spans multiple lines in all kernel versions,
-    # so anchor on just the first line, then match the opening brace
-    sed -i '/^SYSCALL_DEFINE5(renameat2,/,/^{$/{
+    sed -i '/^SYSCALL_DEFINE5(renameat2,.*flags)$/,/^{$/{
         /^{$/a\
 #ifdef CONFIG_KSU_SUSFS_UNICODE_FILTER\
 	if (susfs_check_unicode_bypass(oldname) ||\
