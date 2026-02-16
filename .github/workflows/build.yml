@@ -354,7 +354,7 @@ jobs:
 
         [[ -f "fs/zeromount.c" ]] || { echo "FAIL: zeromount.c missing"; exit 1; }
         [[ -f "include/linux/zeromount.h" ]] || { echo "FAIL: zeromount.h missing"; exit 1; }
-        grep -q "CONFIG_ZEROMOUNT" fs/Kconfig || { echo "FAIL: Kconfig not patched"; exit 1; }
+        grep -q "config ZEROMOUNT" fs/Kconfig || { echo "FAIL: Kconfig not patched"; exit 1; }
         grep -q "zeromount.o" fs/Makefile || { echo "FAIL: Makefile not patched"; exit 1; }
         echo "SUCCESS: ZeroMount core files installed"
 
