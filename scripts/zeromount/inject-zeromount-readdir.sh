@@ -22,6 +22,13 @@ fi
 
 detect_kernel_version "$READDIR_FILE"
 
+# 6.12 refactored struct fd — no .file member, use fd_file() accessor
+if [[ "$ZM_KVER" == "6.12" ]]; then
+    FD_FILE="fd_file(f)"
+else
+    FD_FILE="f.file"
+fi
+
 echo "Injecting ZeroMount readdir hooks into: $READDIR_FILE"
 
 if grep -q "CONFIG_ZEROMOUNT" "$READDIR_FILE"; then
@@ -48,7 +55,7 @@ sed -i '/#include <linux\/uaccess.h>/a\
 #endif' "$READDIR_FILE"
 
 echo "  [2/4] Injecting hooks into getdents..."
-awk '
+awk -v fd_file="$FD_FILE" '
 BEGIN { state = 0 }
 
 /^SYSCALL_DEFINE3\(getdents,/ { state = 1 }
@@ -68,7 +75,7 @@ state == 1 && /return -EBADF;/ && !skip_done {
     print
     print ""
     print "#ifdef CONFIG_ZEROMOUNT"
-    print "\tif (f.file->f_pos >= ZEROMOUNT_MAGIC_POS) {"
+    print "\tif (" fd_file "->f_pos >= ZEROMOUNT_MAGIC_POS) {"
     print "\t\terror = 0;"
     print "\t\tgoto skip_real_iterate;"
     print "\t}"
@@ -83,7 +90,7 @@ state == 1 && /error = buf\.error;/ && !inject_done {
     print "#ifdef CONFIG_ZEROMOUNT"
     print "skip_real_iterate:"
     print "\tif (error >= 0 && !signal_pending(current)) {"
-    print "\t\tzeromount_inject_dents(f.file, (void __user **)&dirent, &count, &f.file->f_pos);"
+    print "\t\tzeromount_inject_dents(" fd_file ", (void __user **)&dirent, &count, &" fd_file "->f_pos);"
     print "\t\terror = initial_count - count;"
     print "\t\tgoto zm_out;"
     print "\t}"
@@ -92,7 +99,6 @@ state == 1 && /error = buf\.error;/ && !inject_done {
     next
 }
 
-# Place label before fdput_pos so zeromount can skip the original epilogue
 state == 1 && /fdput_pos\(f\);/ && !out_done {
     print "#ifdef CONFIG_ZEROMOUNT"
     print "zm_out:"
@@ -106,7 +112,7 @@ state == 1 && /fdput_pos\(f\);/ && !out_done {
 ' "$READDIR_FILE" > "${READDIR_FILE}.tmp" && mv "${READDIR_FILE}.tmp" "$READDIR_FILE"
 
 echo "  [3/4] Injecting hooks into getdents64..."
-awk '
+awk -v fd_file="$FD_FILE" '
 BEGIN { state = 0 }
 
 # 5.4: getdents64 syscall is a wrapper; real impl is ksys_getdents64()
@@ -127,7 +133,7 @@ state == 1 && /return -EBADF;/ && !skip_done {
     print
     print ""
     print "#ifdef CONFIG_ZEROMOUNT"
-    print "\tif (f.file->f_pos >= ZEROMOUNT_MAGIC_POS) {"
+    print "\tif (" fd_file "->f_pos >= ZEROMOUNT_MAGIC_POS) {"
     print "\t\terror = 0;"
     print "\t\tgoto skip_real_iterate;"
     print "\t}"
@@ -142,7 +148,7 @@ state == 1 && /error = buf\.error;/ && !inject_done {
     print "#ifdef CONFIG_ZEROMOUNT"
     print "skip_real_iterate:"
     print "\tif (error >= 0 && !signal_pending(current)) {"
-    print "\t\tzeromount_inject_dents64(f.file, (void __user **)&dirent, &count, &f.file->f_pos);"
+    print "\t\tzeromount_inject_dents64(" fd_file ", (void __user **)&dirent, &count, &" fd_file "->f_pos);"
     print "\t\terror = initial_count - count;"
     print "\t\tgoto zm_out;"
     print "\t}"
@@ -164,7 +170,7 @@ state == 1 && /fdput_pos\(f\);/ && !out_done {
 ' "$READDIR_FILE" > "${READDIR_FILE}.tmp" && mv "${READDIR_FILE}.tmp" "$READDIR_FILE"
 
 echo "  [4/4] Injecting hooks into compat_getdents..."
-awk '
+awk -v fd_file="$FD_FILE" '
 BEGIN { state = 0 }
 
 /^COMPAT_SYSCALL_DEFINE3\(getdents,/ { state = 1 }
@@ -183,7 +189,7 @@ state == 1 && /return -EBADF;/ && !skip_done {
     print
     print ""
     print "#ifdef CONFIG_ZEROMOUNT"
-    print "\tif (f.file->f_pos >= ZEROMOUNT_MAGIC_POS) {"
+    print "\tif (" fd_file "->f_pos >= ZEROMOUNT_MAGIC_POS) {"
     print "\t\terror = 0;"
     print "\t\tgoto skip_real_iterate;"
     print "\t}"
@@ -198,7 +204,7 @@ state == 1 && /error = buf\.error;/ && !inject_done {
     print "#ifdef CONFIG_ZEROMOUNT"
     print "skip_real_iterate:"
     print "\tif (error >= 0 && !signal_pending(current)) {"
-    print "\t\tzeromount_inject_dents(f.file, (void __user **)&dirent, &count, &f.file->f_pos);"
+    print "\t\tzeromount_inject_dents(" fd_file ", (void __user **)&dirent, &count, &" fd_file "->f_pos);"
     print "\t\terror = initial_count - count;"
     print "\t\tgoto zm_out;"
     print "\t}"

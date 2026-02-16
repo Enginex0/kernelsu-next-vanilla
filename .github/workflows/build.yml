@@ -499,8 +499,8 @@ jobs:
         CONFIG_KSU_SUSFS_UNICODE_FILTER=y
         CONFIG_TMPFS_XATTR=y
         CONFIG_TMPFS_POSIX_ACL=y
-        CONFIG_ZSMALLOC=y
-        CONFIG_ZRAM=y
+        CONFIG_ZSMALLOC=m
+        CONFIG_ZRAM=m
         CONFIG_ZRAM_WRITEBACK=y
         CONFIG_CRYPTO_LZ4=y
         CONFIG_CRYPTO_LZ4HC=y
@@ -539,8 +539,7 @@ jobs:
         CONFIG_IP_SET_LIST_SET=y
         DEFEOF
         sed -i 's/^        //' "${{ env.DEFCONFIG }}"
-        sed -i 's/CONFIG_ZRAM=m/CONFIG_ZRAM=y/g' "${{ env.DEFCONFIG }}"
-        sed -i 's/CONFIG_ZSMALLOC=m/CONFIG_ZSMALLOC=y/g' "${{ env.DEFCONFIG }}"
+        # ZRAM/ZSMALLOC must stay =m to match gki_aarch64_modules list
 
         # Disable defconfig check for build
         if [[ "${{ env.KERNEL_VERSION }}" == "6.12" ]]; then
