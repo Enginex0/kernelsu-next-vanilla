@@ -28,7 +28,7 @@ new file mode 100644
 index 000000000..43ca3f0fa
 --- /dev/null
 +++ b/fs/zeromount.c
-@@ -0,0 +1,1225 @@
+@@ -0,0 +1,1310 @@
 +#include <linux/module.h>
 +#include <linux/kernel.h>
 +#include <linux/init.h>
@@ -66,6 +66,7 @@ index 000000000..43ca3f0fa
 +DEFINE_SPINLOCK(zeromount_lock);
 +DECLARE_BITMAP(zeromount_bloom, ZEROMOUNT_BLOOM_SIZE);
 +EXPORT_SYMBOL(zeromount_bloom);
++DECLARE_BITMAP(zeromount_bloom_ino, ZEROMOUNT_BLOOM_SIZE);
 +
 +atomic_t zeromount_enabled = ATOMIC_INIT(0);
 +#define ZEROMOUNT_DISABLED() (atomic_read(&zeromount_enabled) == 0)
@@ -75,8 +76,13 @@ index 000000000..43ca3f0fa
 +    unsigned int len = strlen(name);
 +    unsigned int h1 = jhash(name, len, 0);
 +    unsigned int h2 = jhash(name, len, 1);
-+    set_bit(h1 & (ZEROMOUNT_BLOOM_SIZE - 1), zeromount_bloom);
-+    set_bit(h2 & (ZEROMOUNT_BLOOM_SIZE - 1), zeromount_bloom);
++    unsigned int b1 = h1 & (ZEROMOUNT_BLOOM_SIZE - 1);
++    unsigned int b2 = h2 & (ZEROMOUNT_BLOOM_SIZE - 1);
++    set_bit(b1, zeromount_bloom);
++    set_bit(b2, zeromount_bloom);
++    if (zeromount_debug_level >= 2)
++        pr_info("[zeromount:bloom] path_add name=%s h1=0x%08x h2=0x%08x b1=%u b2=%u\n",
++                name, h1, h2, b1, b2);
 +}
 +
 +static bool zeromount_bloom_test(const char *name)
@@ -84,20 +90,52 @@ index 000000000..43ca3f0fa
 +    unsigned int len = strlen(name);
 +    unsigned int h1 = jhash(name, len, 0);
 +    unsigned int h2 = jhash(name, len, 1);
-+    if (!test_bit(h1 & (ZEROMOUNT_BLOOM_SIZE - 1), zeromount_bloom))
-+        return false;
-+    if (!test_bit(h2 & (ZEROMOUNT_BLOOM_SIZE - 1), zeromount_bloom))
-+        return false;
-+    return true;
++    unsigned int b1 = h1 & (ZEROMOUNT_BLOOM_SIZE - 1);
++    unsigned int b2 = h2 & (ZEROMOUNT_BLOOM_SIZE - 1);
++    bool hit = test_bit(b1, zeromount_bloom) && test_bit(b2, zeromount_bloom);
++    if (zeromount_debug_level >= 2)
++        pr_info("[zeromount:bloom] path_test name=%s h1=0x%08x h2=0x%08x b1=%u b2=%u result=%s\n",
++                name, h1, h2, b1, b2, hit ? "HIT" : "MISS");
++    return hit;
++}
++
++static void zeromount_bloom_add_ino(unsigned long ino, dev_t dev)
++{
++    unsigned long key = ino ^ dev;
++    unsigned int h1 = jhash(&key, sizeof(key), 0);
++    unsigned int h2 = jhash(&key, sizeof(key), 1);
++    unsigned int b1 = h1 & (ZEROMOUNT_BLOOM_SIZE - 1);
++    unsigned int b2 = h2 & (ZEROMOUNT_BLOOM_SIZE - 1);
++    set_bit(b1, zeromount_bloom_ino);
++    set_bit(b2, zeromount_bloom_ino);
++    if (zeromount_debug_level >= 2)
++        pr_info("[zeromount:bloom] ino_add ino=%lu dev=%u key=0x%lx b1=%u b2=%u\n",
++                ino, dev, key, b1, b2);
++}
++
++static bool zeromount_bloom_test_ino(unsigned long ino, dev_t dev)
++{
++    unsigned long key = ino ^ dev;
++    unsigned int h1 = jhash(&key, sizeof(key), 0);
++    unsigned int h2 = jhash(&key, sizeof(key), 1);
++    unsigned int b1 = h1 & (ZEROMOUNT_BLOOM_SIZE - 1);
++    unsigned int b2 = h2 & (ZEROMOUNT_BLOOM_SIZE - 1);
++    bool hit = test_bit(b1, zeromount_bloom_ino) && test_bit(b2, zeromount_bloom_ino);
++    if (zeromount_debug_level >= 2)
++        pr_info("[zeromount:bloom] ino_test ino=%lu dev=%u key=0x%lx b1=%u b2=%u result=%s\n",
++                ino, dev, key, b1, b2, hit ? "HIT" : "MISS");
++    return hit;
 +}
 +
 +static void zeromount_bloom_rebuild(void)
 +{
 +    struct zeromount_rule *rule;
 +    bitmap_zero(zeromount_bloom, ZEROMOUNT_BLOOM_SIZE);
++    bitmap_zero(zeromount_bloom_ino, ZEROMOUNT_BLOOM_SIZE);
 +    list_for_each_entry(rule, &zeromount_rules_list, list) {
 +        zeromount_bloom_add(rule->virtual_path);
-+        zeromount_bloom_add(rule->real_path);
++        if (rule->real_ino != 0)
++            zeromount_bloom_add_ino(rule->real_ino, rule->real_dev);
 +    }
 +}
 +
@@ -209,6 +247,20 @@ index 000000000..43ca3f0fa
 +    kfree(rule);
 +}
 +
++static void zeromount_free_child_rcu(struct rcu_head *head)
++{
++    struct zeromount_child_name *child = container_of(head, struct zeromount_child_name, rcu);
++    kfree(child->name);
++    kfree(child);
++}
++
++static void zeromount_free_dir_node_rcu(struct rcu_head *head)
++{
++    struct zeromount_dir_node *dnode = container_of(head, struct zeromount_dir_node, rcu);
++    kfree(dnode->dir_path);
++    kfree(dnode);
++}
++
 +static void zeromount_flush_parent(const char *full_path) {
 +    char *path_copy, *last_slash, *parent_str, *child_name;
 +    struct path parent;
@@ -318,8 +370,12 @@ index 000000000..43ca3f0fa
 +
 +    key = inode->i_ino ^ inode->i_sb->s_dev;
 +
-+    if (!test_bit(inode->i_ino & (ZEROMOUNT_BLOOM_SIZE - 1), zeromount_bloom))
++    if (!zeromount_bloom_test_ino(inode->i_ino, inode->i_sb->s_dev)) {
++        if (zeromount_debug_level >= 2)
++            pr_info("[zeromount:bloom] get_virtual_path_for_inode REJECT ino=%lu dev=%u\n",
++                    inode->i_ino, inode->i_sb->s_dev);
 +        return NULL;
++    }
 +
 +    rcu_read_lock();
 +    hash_for_each_possible_rcu(zeromount_ino_ht, rule, ino_node, key) {
@@ -363,7 +419,6 @@ index 000000000..43ca3f0fa
 +
 +bool zeromount_is_traversal_allowed(struct inode *inode, int mask) {
 +    if (!inode || zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val)) return false;
-+    if (!test_bit(inode->i_ino & (ZEROMOUNT_BLOOM_SIZE - 1), zeromount_bloom)) return false;
 +    if (!(mask & MAY_EXEC)) return false;
 +
 +    if ((READ_ONCE(zm_ino_adb) != 0 && inode->i_ino == READ_ONCE(zm_ino_adb)) ||
@@ -383,8 +438,12 @@ index 000000000..43ca3f0fa
 +
 +    key = inode->i_ino ^ inode->i_sb->s_dev;
 +
-+    if (!test_bit(inode->i_ino & (ZEROMOUNT_BLOOM_SIZE - 1), zeromount_bloom))
++    if (!zeromount_bloom_test_ino(inode->i_ino, inode->i_sb->s_dev)) {
++        if (zeromount_debug_level >= 2)
++            pr_info("[zeromount:bloom] is_injected_file REJECT ino=%lu dev=%u\n",
++                    inode->i_ino, inode->i_sb->s_dev);
 +        return false;
++    }
 +
 +    rcu_read_lock();
 +    hash_for_each_possible_rcu(zeromount_ino_ht, rule, ino_node, key) {
@@ -417,9 +476,13 @@ index 000000000..43ca3f0fa
 +    hash = full_name_hash(NULL, normalized, strlen(normalized));
 +
 +    if (!zeromount_bloom_test(normalized)) {
++        if (zeromount_debug_level >= 2)
++            pr_info("[zeromount:bloom] resolve_path REJECT path=%s\n", normalized);
 +        kfree(normalized);
 +        return NULL;
 +    }
++    if (zeromount_debug_level >= 2)
++        pr_info("[zeromount:bloom] resolve_path ACCEPT path=%s\n", normalized);
 +
 +    rcu_read_lock();
 +    hash_for_each_possible_rcu(zeromount_rules_ht, rule, node, hash) {
@@ -507,12 +570,26 @@ index 000000000..43ca3f0fa
 +{
 +    char *target_path;
 +    struct filename *new_name;
++    char *normalized;
 +
 +    if (zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val) || !name || name->name[0] != '/')
 +        return name;
 +
-+    if (!zeromount_bloom_test(name->name))
++    normalized = zeromount_normalize_path(name->name);
++    if (!normalized)
 +        return name;
++
++    if (!zeromount_bloom_test(normalized)) {
++        if (zeromount_debug_level >= 2)
++            pr_info("[zeromount:bloom] getname_hook REJECT raw=%s normalized=%s\n",
++                    name->name, normalized);
++        kfree(normalized);
++        return name;
++    }
++    if (zeromount_debug_level >= 2)
++        pr_info("[zeromount:bloom] getname_hook ACCEPT raw=%s normalized=%s\n",
++                name->name, normalized);
++    kfree(normalized);
 +
 +    zm_enter();
 +
@@ -541,14 +618,16 @@ index 000000000..43ca3f0fa
 +    struct zeromount_child_name *child;
 +    char *normalized;
 +    bool found = false;
-+    int bkt;
++    u32 hash_key;
 +
 +    // d_path() returns canonical paths; stored dir_paths are normalized
 +    normalized = zeromount_normalize_path(dir_path);
 +    if (!normalized) return false;
 +
++    hash_key = full_name_hash(NULL, normalized, strlen(normalized));
++
 +    rcu_read_lock();
-+    hash_for_each_rcu(zeromount_dirs_ht, bkt, node, node) {
++    hash_for_each_possible_rcu(zeromount_dirs_ht, node, node, hash_key) {
 +        if (strcmp(normalized, node->dir_path) == 0) {
 +            unsigned long current_idx = 0;
 +            list_for_each_entry_rcu(child, &node->children_names, list) {
@@ -560,8 +639,8 @@ index 000000000..43ca3f0fa
 +                }
 +                current_idx++;
 +            }
++            break;
 +        }
-+        if (found) break;
 +    }
 +    rcu_read_unlock();
 +    kfree(normalized);
@@ -579,9 +658,6 @@ index 000000000..43ca3f0fa
 +    unsigned long fake_ino;
 +
 +    if (zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val)) return;
-+
-+    if (!test_bit(file_inode(file)->i_ino & (ZEROMOUNT_BLOOM_SIZE - 1), zeromount_bloom))
-+        return;
 +
 +    page_buf = __getname();
 +    if (!page_buf) return;
@@ -650,9 +726,6 @@ index 000000000..43ca3f0fa
 +    unsigned long fake_ino;
 +
 +    if (zeromount_should_skip() || zeromount_is_uid_blocked(current_uid().val)) return;
-+
-+    if (!test_bit(file_inode(file)->i_ino & (ZEROMOUNT_BLOOM_SIZE - 1), zeromount_bloom))
-+        return;
 +
 +    page_buf = __getname();
 +    if (!page_buf) return;
@@ -975,10 +1048,10 @@ index 000000000..43ca3f0fa
 +        hash_add_rcu(zeromount_ino_ht, &rule->ino_node, ino_key);
 +    }
 +    list_add_tail(&rule->list, &zeromount_rules_list);
-+    spin_unlock(&zeromount_lock);
-+
 +    zeromount_bloom_add(v_path);
-+    zeromount_bloom_add(r_path);
++    if (rule->real_ino != 0)
++        zeromount_bloom_add_ino(rule->real_ino, rule->real_dev);
++    spin_unlock(&zeromount_lock);
 +
 +    type = DT_REG;
 +    if (data.flags & ZM_FLAG_IS_DIR) type = DT_DIR;
@@ -1018,7 +1091,7 @@ index 000000000..43ca3f0fa
 +            hash_del_rcu(&rule->node);
 +            if (rule->real_ino != 0)
 +                hash_del_rcu(&rule->ino_node);
-+            list_del(&rule->list);
++            list_del_rcu(&rule->list);
 +            found = true;
 +            break;
 +        }
@@ -1039,6 +1112,8 @@ index 000000000..43ca3f0fa
 +{
 +    struct zeromount_rule *rule;
 +    struct zeromount_uid_node *uid_node;
++    struct zeromount_dir_node *dnode;
++    struct zeromount_child_name *child, *child_tmp;
 +    struct hlist_node *tmp;
 +    int bkt;
 +
@@ -1048,7 +1123,7 @@ index 000000000..43ca3f0fa
 +        hash_del_rcu(&rule->node);
 +        if (rule->real_ino != 0)
 +            hash_del_rcu(&rule->ino_node);
-+        list_del(&rule->list);
++        list_del_rcu(&rule->list);
 +        call_rcu(&rule->rcu, zeromount_free_rule_rcu);
 +    }
 +
@@ -1057,7 +1132,17 @@ index 000000000..43ca3f0fa
 +        kfree_rcu(uid_node, rcu);
 +    }
 +
++    hash_for_each_safe(zeromount_dirs_ht, bkt, tmp, dnode, node) {
++        hash_del_rcu(&dnode->node);
++        list_for_each_entry_safe(child, child_tmp, &dnode->children_names, list) {
++            list_del_rcu(&child->list);
++            call_rcu(&child->rcu, zeromount_free_child_rcu);
++        }
++        call_rcu(&dnode->rcu, zeromount_free_dir_node_rcu);
++    }
++
 +    bitmap_zero(zeromount_bloom, ZEROMOUNT_BLOOM_SIZE);
++    bitmap_zero(zeromount_bloom_ino, ZEROMOUNT_BLOOM_SIZE);
 +
 +    spin_unlock(&zeromount_lock);
 +    return 0;
@@ -1259,7 +1344,7 @@ new file mode 100644
 index 000000000..9e0fb1b21
 --- /dev/null
 +++ b/include/linux/zeromount.h
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,165 @@
 +#ifndef _LINUX_ZEROMOUNT_H
 +#define _LINUX_ZEROMOUNT_H
 +
@@ -1390,6 +1475,7 @@ index 000000000..9e0fb1b21
 +extern struct list_head zeromount_rules_list;
 +extern spinlock_t zeromount_lock;
 +extern unsigned long zeromount_bloom[];
++extern unsigned long zeromount_bloom_ino[];
 +
 +#ifdef CONFIG_ZEROMOUNT
 +extern atomic_t zeromount_enabled;
